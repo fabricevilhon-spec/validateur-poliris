@@ -96,7 +96,7 @@ def main():
     # Charger les en-têtes depuis le fichier fourni
     try:
         headers_df = pd.read_csv(HEADER_FILE, header=None)
-        column_headers = headers_df[0].tolist()
+        column_headers = headers_df.iloc[0].tolist()
         if len(column_headers) != EXPECTED_COLUMNS:
             st.warning(f"Attention, le fichier d'en-têtes `{HEADER_FILE}` ne contient pas les {EXPECTED_COLUMNS} colonnes attendues.")
     except FileNotFoundError:
