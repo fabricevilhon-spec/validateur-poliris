@@ -95,13 +95,25 @@ def main():
 
     # Charger les en-têtes depuis le fichier fourni
     try:
-        headers_df = pd.read_csv(HEADER_FILE, header=None)
+        # MODIFICATION : Ajout de sep=';' car Excel en France utilise le point-virgule.
+        # J'ai aussi remis l'encoding au cas où, pour être plus robuste.
+        headers_df = pd.read_csv(HEADER_FILE, header=None, encoding='ISO-8859-1', sep=';')
+        
+        # On lit la première ligne, qui contient toutes les colonnes.
         column_headers = headers_df.iloc[0].tolist()
+
+        # --- AJOUT POUR LE DÉBOGAGE ---
+        # Affiche le nombre de colonnes réellement lues pour nous aider à diagnostiquer.
+        st.info(f"INFO DÉBOGAGE : Nombre de colonnes lues dans le fichier d'en-têtes : {len(column_headers)}")
+        # -----------------------------
+
         if len(column_headers) != EXPECTED_COLUMNS:
             st.warning(f"Attention, le fichier d'en-têtes `{HEADER_FILE}` ne contient pas les {EXPECTED_COLUMNS} colonnes attendues.")
+            
     except FileNotFoundError:
         st.error(f"Fichier d'en-têtes `{HEADER_FILE}` introuvable. Assurez-vous qu'il est dans le même dossier que le script.")
         return
+
 
     uploaded_file = st.file_uploader("Chargez votre fichier d'annonces (.csv ou .txt)", type=['csv', 'txt'])
 
