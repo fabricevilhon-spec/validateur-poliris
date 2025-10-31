@@ -35,6 +35,28 @@ for i in range(nb_champs_definis, 334):
 SCHEMA.extend(placeholders)
 
 # =============================================================================
+# FONCTION DE DÉCODAGE ROBUSTE
+# =============================================================================
+def try_decode(data_bytes):
+    """
+    Tente de décoder les données avec une liste d'encodages courants.
+    Retourne le contenu décodé et l'encodage utilisé, ou (None, None) si tout échoue.
+    """
+    encodings_to_try = [
+        'utf-8',        # Le standard universel
+        'ISO-8859-1',   # Très courant en Europe de l'Ouest (Latin-1)
+        'windows-1252', # La variante de Latin-1 utilisée par Windows
+    ]
+    
+    for encoding in encodings_to_try:
+        try:
+            return data_bytes.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue # Échoue, on passe au suivant
+            
+    return None, None # Si aucun encodage n'a fonctionné
+
+# =============================================================================
 # FONCTIONS DE VALIDATION
 # =============================================================================
 def validate_row(row_num, row_data):
@@ -90,35 +112,23 @@ def highlight_errors(styler, error_locations):
 def main():
     st.set_page_config(layout="wide", page_title="Validateur Figaro Immo")
 
-    st.title("✅ Validateur de Fichier pour Figaro Immo")
-    st.markdown("Chargez un fichier `Annonces.csv` pour l'analyser, visualiser les données et identifier les erreurs.")
-
-        # Charger les en-têtes depuis le fichier fourni
-    try:
-        # On spécifie l'encodage et le séparateur point-virgule pour être compatible avec Excel France.
-        headers_df = pd.read_csv(HEADER_FILE, header=None, encoding='ISO-8859-1', sep=';')
-        
-        # On lit la première ligne, qui contient toutes les colonnes.
-        column_headers = headers_df.iloc[0].tolist()
-
-        # On vérifie une dernière fois, mais sans message de débogage.
-        if len(column_headers) != EXPECTED_COLUMNS:
-            st.warning(f"Attention, le fichier d'en-têtes `{HEADER_FILE}` semble incorrect. {len(column_headers)} colonnes lues au lieu de {EXPECTED_COLUMNS}.")
-            return # Bloque le reste de l'exécution si les en-têtes ne sont pas bons.
-            
-    except FileNotFoundError:
-        st.error(f"Fichier d'en-têtes `{HEADER_FILE}` introuvable. Assurez-vous qu'il est dans le même dossier que le script.")
-        return
-
-
     uploaded_file = st.file_uploader("Chargez votre fichier d'annonces (.csv ou .txt)", type=['csv', 'txt'])
 
     if uploaded_file:
         all_errors = []
         data_rows = []
-        
-        # Lecture et validation du fichier
-        file_content = uploaded_file.getvalue().decode('utf-8')
+
+        # --- DEBUT DE LA NOUVELLE ZONE ---
+        # Lecture et validation du fichier avec gestion multi-encodage
+        file_bytes = uploaded_file.getvalue()
+        file_content, detected_encoding = try_decode(file_bytes)
+
+        if file_content is None:
+            st.error("ERREUR CRITIQUE : Impossible de lire le fichier. Aucun encodage compatible n'a été trouvé parmi (UTF-8, ISO-8859-1, Windows-1252). Le fichier est peut-être corrompu ou utilise un encodage très spécifique.")
+            return # Stoppe l'exécution de la fonction
+
+        st.info(f"Fichier lu avec succès en utilisant l'encodage : **{detected_encoding}**")
+
         reader = csv.reader(io.StringIO(file_content), delimiter='!', quotechar='"', quoting=csv.QUOTE_ALL)
         
         for i, row in enumerate(reader):
@@ -126,6 +136,7 @@ def main():
             data_rows.append(row)
             errors_in_row = validate_row(i + 1, row)
             all_errors.extend(errors_in_row)
+        # --- FIN DE LA NOUVELLE ZONE ---
 
         st.header("Résultats de l'Analyse")
 
