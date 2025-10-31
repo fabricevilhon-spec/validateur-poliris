@@ -93,22 +93,18 @@ def main():
     st.title("✅ Validateur de Fichier pour Figaro Immo")
     st.markdown("Chargez un fichier `Annonces.csv` pour l'analyser, visualiser les données et identifier les erreurs.")
 
-    # Charger les en-têtes depuis le fichier fourni
+        # Charger les en-têtes depuis le fichier fourni
     try:
-        # MODIFICATION : Ajout de sep=';' car Excel en France utilise le point-virgule.
-        # J'ai aussi remis l'encoding au cas où, pour être plus robuste.
+        # On spécifie l'encodage et le séparateur point-virgule pour être compatible avec Excel France.
         headers_df = pd.read_csv(HEADER_FILE, header=None, encoding='ISO-8859-1', sep=';')
         
         # On lit la première ligne, qui contient toutes les colonnes.
         column_headers = headers_df.iloc[0].tolist()
 
-        # --- AJOUT POUR LE DÉBOGAGE ---
-        # Affiche le nombre de colonnes réellement lues pour nous aider à diagnostiquer.
-        st.info(f"INFO DÉBOGAGE : Nombre de colonnes lues dans le fichier d'en-têtes : {len(column_headers)}")
-        # -----------------------------
-
+        # On vérifie une dernière fois, mais sans message de débogage.
         if len(column_headers) != EXPECTED_COLUMNS:
-            st.warning(f"Attention, le fichier d'en-têtes `{HEADER_FILE}` ne contient pas les {EXPECTED_COLUMNS} colonnes attendues.")
+            st.warning(f"Attention, le fichier d'en-têtes `{HEADER_FILE}` semble incorrect. {len(column_headers)} colonnes lues au lieu de {EXPECTED_COLUMNS}.")
+            return # Bloque le reste de l'exécution si les en-têtes ne sont pas bons.
             
     except FileNotFoundError:
         st.error(f"Fichier d'en-têtes `{HEADER_FILE}` introuvable. Assurez-vous qu'il est dans le même dossier que le script.")
