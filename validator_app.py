@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import io
-import csv
 from datetime import datetime
 
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "8.0.0 (Refonte Finale de la Logique de Lecture)"
+__version__ = "9.0.0 (Méthode de Lecture Brute-Force)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -58,22 +57,16 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 
 def validate_row(row_num, row_data):
     errors = []
-    # Le module CSV a déjà retiré les guillemets, donc pas besoin de .strip('"')
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
-    
-    for i, field_value in enumerate(row_data):
+    for i, clean_value in enumerate(row_data):
         rule = SCHEMA[i]
-        # On nettoie juste les espaces superflus
-        clean_value = field_value.strip()
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
-        
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
             continue
-            
         for validation_function in TYPE_VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
@@ -131,25 +124,33 @@ def main():
         
         all_errors, data_rows = [], []
         
-        # --- LA CORRECTION FINALE ET ROBUSTE EST ICI ---
-        # 1. On remplace le délimiteur complexe par une tabulation
-        processed_content = file_content.replace('!#', '\t')
-        
-        # 2. On confie le contenu au module CSV, l'expert pour gérer les sauts de ligne dans les champs
-        # Le `quoting=csv.QUOTE_ALL` garantit que tout est traité comme étant entre guillemets
-        reader = csv.reader(io.StringIO(processed_content), delimiter='\t', quoting=csv.QUOTE_ALL)
-        
-        for i, row in enumerate(reader):
-            # Le module CSV peut parfois produire des lignes vides finales, on les ignore.
-            if not row: continue
+        # --- LOGIQUE DE LECTURE "BRUTE-FORCE" SELON VOTRE SUGGESTION ---
+        # 1. On normalise tous les types de sauts de ligne en un seul (\n)
+        normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
+        # 2. On sépare le fichier en lignes
+        lines = normalized_content.strip().split('\n')
+
+        for i, line in enumerate(lines):
+            if not line: continue
             
-            if len(row) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(row)}).", 'Valeur': 'Ligne non affichée.'})
+            # 3. On split par '#' (votre suggestion)
+            fields = line.split('#')
+            
+            # 4. On nettoie chaque champ (on retire les '!' au début et les guillemets autour)
+            # Pour le premier champ, on retire juste les guillemets
+            # Pour les autres, on retire le '!' potentiel au début, PUIS les guillemets.
+            cleaned_row = []
+            if fields:
+                cleaned_row.append(fields[0].strip('"').strip())
+                for field in fields[1:]:
+                    cleaned_row.append(field.lstrip('!').strip('"').strip())
+            
+            if len(cleaned_row) != EXPECTED_COLUMNS:
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
                 
-            # Les données du `reader` ont déjà leurs guillemets retirés.
-            data_rows.append(row)
-            all_errors.extend(validate_row(i + 1, row))
+            data_rows.append(cleaned_row)
+            all_errors.extend(validate_row(i + 1, cleaned_row))
 
         st.header("2. Visualisation des Données")
         if data_rows:
