@@ -121,7 +121,7 @@ def main():
 
     try:
         headers_df = pd.read_csv(HEADER_FILE, header=None, encoding='ISO-8859-1', sep=';')
-        column_headers = headers_df.iloc[0].tolist()
+        column_headers = headers_df.iloc[1].tolist() # On lit la deuxième ligne (index 1)
         if len(column_headers) != EXPECTED_COLUMNS:
             st.error(f"Erreur de configuration : le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
