@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.9.0 (Mode Diagnostic)"
+__version__ = "5.0.0 (Version Finale Robuste)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -43,14 +43,10 @@ def check_type_decimal(value, rule):
     if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'): return 'Doit être un nombre.'
     return None
     
-# --- LA MODIFICATION "DÉTECTIVE" EST ICI ---
 def check_type_date(value, rule):
     if rule.get('type') == 'Date':
-        try:
-            datetime.strptime(value, '%d/%m/%Y')
-        except ValueError:
-            # Nouveau message d'erreur beaucoup plus détaillé
-            return f"Format de date invalide. La valeur brute est {repr(value)} (longueur: {len(value)})."
+        try: datetime.strptime(value, '%d/%m/%Y')
+        except ValueError: return f"Format de date invalide. La valeur est {repr(value)}."
     return None
 
 def check_valeurs_permises(value, rule):
@@ -62,19 +58,16 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"').strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
-    
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         clean_value = field_value.strip('"').strip()
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
-
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
             continue
-        
         for validation_function in TYPE_VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
@@ -131,13 +124,20 @@ def main():
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
         all_errors, data_rows = [], []
-        lines = file_content.strip().splitlines()
-        for i, line in enumerate(lines):
-            if not line: continue
-            fields = line.split('!#')
+        
+        # --- LA CORRECTION FINALE EST ICI ---
+        # On splitte par le vrai séparateur de ligne CRLF, ce qui est robuste aux sauts de ligne dans les champs
+        records = file_content.strip().split('\r\n')
+        
+        for i, record in enumerate(records):
+            if not record: continue
+            
+            fields = record.split('!#')
+            
             if len(fields) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS}, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}). Vérifiez les sauts de ligne.", 'Valeur': 'Ligne non affichée.'})
                 continue
+                
             data_rows.append([field.strip('"').strip() for field in fields])
             all_errors.extend(validate_row(i + 1, fields))
 
