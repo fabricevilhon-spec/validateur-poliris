@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.7.0" # Correction finale de la logique de validation des champs vides
+__version__ = "4.8.0" # Correction finale et définitive de la logique de validation
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -53,31 +53,36 @@ def check_valeurs_permises(value, rule):
     if rule.get('valeurs') and value not in rule.get('valeurs', []): return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
+# On sépare la vérification 'obligatoire' des autres vérifications de type/format
+TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
+# --- LA CORRECTION FINALE EST DANS CETTE FONCTION ---
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"').strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
     
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
-        # --- LA CORRECTION EST ICI ---
-        clean_value = field_value.strip('"').strip() # On enlève guillemets ET espaces
-        
+        clean_value = field_value.strip('"').strip()
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
 
+        # 1. Le champ est-il vide ?
         if not clean_value:
+            # S'il est vide, on vérifie SEULEMENT s'il était obligatoire.
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
-        else:
-            for validation_function in VALIDATION_PIPELINE:
-                error_message = validation_function(clean_value, rule)
-                if error_message:
-                    error_template['Message'] = error_message
-                    errors.append(error_template)
-                    break
+            # Dans tous les cas (obligatoire ou non), on a fini avec ce champ vide. On passe au suivant.
+            continue
+        
+        # 2. Si on est ici, le champ N'EST PAS vide. On peut valider son type et son format.
+        for validation_function in TYPE_VALIDATION_PIPELINE:
+            error_message = validation_function(clean_value, rule)
+            if error_message:
+                error_template['Message'] = error_message
+                errors.append(error_template)
+                break # On arrête à la première erreur pour ce champ
     return errors
 
 # =============================================================================
@@ -100,22 +105,21 @@ def main():
     st.title("✅ Validateur de Fichier Poliris")
 
     try:
-        with open(HEADER_FILE, 'rb') as f:
-            header_bytes = f.read()
+        with open(HEADER_FILE, 'rb') as f: header_bytes = f.read()
         decoded_content, _ = try_decode(header_bytes)
         if decoded_content is None:
-            st.error(f"Erreur de configuration : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
+            st.error(f"Erreur config : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
             return
         headers_df = pd.read_csv(io.StringIO(decoded_content), header=None, sep=';')
         column_headers = headers_df.iloc[1].tolist()
         if len(column_headers) != EXPECTED_COLUMNS:
-            st.error(f"Erreur de configuration : Le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
+            st.error(f"Erreur config : Le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
     except FileNotFoundError:
-        st.error(f"Fichier de configuration manquant : `{HEADER_FILE}` introuvable.")
+        st.error(f"Fichier config manquant : `{HEADER_FILE}` introuvable.")
         return
     except IndexError:
-        st.error(f"Erreur de configuration : Impossible de lire la deuxième ligne de `{HEADER_FILE}`.")
+        st.error(f"Erreur config : Impossible de lire la 2ème ligne de `{HEADER_FILE}`.")
         return
 
     uploaded_file = st.file_uploader("1. Chargez votre fichier d'annonces", type=['csv', 'txt'])
@@ -136,7 +140,7 @@ def main():
             if len(fields) != EXPECTED_COLUMNS:
                 all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS}, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
-            data_rows.append([field.strip('"').strip() for field in fields]) # Nettoyage pour l'affichage
+            data_rows.append([field.strip('"').strip() for field in fields])
             all_errors.extend(validate_row(i + 1, fields))
 
         st.header("2. Visualisation des Données")
@@ -166,3 +170,4 @@ if __name__ == "__main__":
     except Exception as e:
         st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
         st.exception(e)
+
