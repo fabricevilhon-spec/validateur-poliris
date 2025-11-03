@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.8.0" # Correction finale et définitive de la logique de validation
+__version__ = "4.9.0 (Mode Diagnostic)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -43,20 +43,22 @@ def check_type_decimal(value, rule):
     if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'): return 'Doit être un nombre.'
     return None
     
+# --- LA MODIFICATION "DÉTECTIVE" EST ICI ---
 def check_type_date(value, rule):
     if rule.get('type') == 'Date':
-        try: datetime.strptime(value, '%d/%m/%Y')
-        except ValueError: return 'Format de date invalide (attendu: JJ/MM/AAAA).'
+        try:
+            datetime.strptime(value, '%d/%m/%Y')
+        except ValueError:
+            # Nouveau message d'erreur beaucoup plus détaillé
+            return f"Format de date invalide. La valeur brute est {repr(value)} (longueur: {len(value)})."
     return None
 
 def check_valeurs_permises(value, rule):
     if rule.get('valeurs') and value not in rule.get('valeurs', []): return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-# On sépare la vérification 'obligatoire' des autres vérifications de type/format
 TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
-# --- LA CORRECTION FINALE EST DANS CETTE FONCTION ---
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"').strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
@@ -66,23 +68,19 @@ def validate_row(row_num, row_data):
         clean_value = field_value.strip('"').strip()
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
 
-        # 1. Le champ est-il vide ?
         if not clean_value:
-            # S'il est vide, on vérifie SEULEMENT s'il était obligatoire.
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
-            # Dans tous les cas (obligatoire ou non), on a fini avec ce champ vide. On passe au suivant.
             continue
         
-        # 2. Si on est ici, le champ N'EST PAS vide. On peut valider son type et son format.
         for validation_function in TYPE_VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
-                break # On arrête à la première erreur pour ce champ
+                break
     return errors
 
 # =============================================================================
@@ -170,4 +168,3 @@ if __name__ == "__main__":
     except Exception as e:
         st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
         st.exception(e)
-
