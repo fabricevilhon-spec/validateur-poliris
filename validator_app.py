@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import io
+import csv
 from datetime import datetime
 
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "3.3.0" # Correction du parsing du délimiteur !# et des guillemets
+__version__ = "3.4.0" # Stabilité améliorée et prévention des pages blanches
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -47,20 +48,23 @@ def validate_row(row_num, row_data):
         rule = SCHEMA[i]
         field_name = rule['nom']
         
-        if rule['obligatoire'] and not field_value:
-            errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Le champ obligatoire est vide.', 'Valeur': f'"{field_value}"'})
-        elif field_value:
-            if rule['type'] == 'Entier' and not field_value.isdigit():
-                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Doit être un entier.', 'Valeur': f'"{field_value}"'})
-            elif rule['type'] == 'Décimal' and not pd.to_numeric(field_value.replace(',', '.'), errors='coerce'):
-                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Doit être un nombre.', 'Valeur': f'"{field_value}"'})
+        # Le nettoyage des guillemets se fait maintenant ici
+        clean_value = field_value.strip('"')
+        
+        if rule['obligatoire'] and not clean_value:
+            errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Le champ obligatoire est vide.', 'Valeur': f'"{clean_value}"'})
+        elif clean_value:
+            if rule['type'] == 'Entier' and not clean_value.isdigit():
+                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Doit être un entier.', 'Valeur': f'"{clean_value}"'})
+            elif rule['type'] == 'Décimal' and not pd.to_numeric(clean_value.replace(',', '.'), errors='coerce'):
+                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Doit être un nombre.', 'Valeur': f'"{clean_value}"'})
             elif rule['type'] == 'Date':
                 try:
-                    datetime.strptime(field_value, '%d/%m/%Y')
+                    datetime.strptime(clean_value, '%d/%m/%Y')
                 except ValueError:
-                    errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Format de date invalide (JJ/MM/AAAA).', 'Valeur': f'"{field_value}"'})
-            elif rule.get('valeurs') and field_value not in rule['valeurs']:
-                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': f'Valeur non autorisée. Attendues: {rule["valeurs"]}', 'Valeur': f'"{field_value}"'})
+                    errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': 'Format de date invalide (JJ/MM/AAAA).', 'Valeur': f'"{clean_value}"'})
+            elif rule.get('valeurs') and clean_value not in rule['valeurs']:
+                errors.append({'Ligne': row_num, 'Champ': field_name, 'Message': f'Valeur non autorisée. Attendues: {rule["valeurs"]}', 'Valeur': f'"{clean_value}"'})
     return errors
 
 def style_error_rows(row, error_row_indices):
@@ -99,24 +103,58 @@ def main():
         all_errors = []
         data_rows = []
         
-        # --- NOUVELLE MÉTHODE DE PARSING ---
-        # On lit le fichier ligne par ligne et on split manuellement
-        lines = file_content.strip().splitlines()
-        for i, line in enumerate(lines):
-            if not line: continue
+        # --- NOUVELLE MÉTHODE DE LECTURE (plus sûre) ---
+        # On remplace le séparateur !# par un caractère que le module CSV peut gérer (comme une tabulation \t)
+        # On retire les guillemets en amont
+        cleaned_content = file_content.replace('!#', '\t')
+        
+        reader = csv.reader(io.StringIO(cleaned_content), delimiter='\t', quoting=csv.QUOTE_NONE)
+        
+        for i, row in enumerate(reader):
+            if not any(row): continue
+            
+            # On nettoie les guillemets restants au début/fin de chaque champ
+            cleaned_row = [field.strip('"') for field in row]
 
-            # 1. On split par le délimiteur '!#'
-            fields = line.split('!#')
-            
-            # 2. On nettoie les guillemets de chaque champ
-            row = [field.strip('"') for field in fields]
-            
-            # 3. On procède à la validation comme avant
-            if len(row) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Champ': 'Général', 'Message': f"Erreur de structure : La ligne ne contient pas le bon nombre de colonnes (attendu: {EXPECTED_COLUMNS}, trouvé: {len(row)}).", 'Valeur': 'Cette ligne n\'est pas affichée dans le tableau.'})
+            if len(cleaned_row) != EXPECTED_COLUMNS:
+                all_errors.append({'Ligne': i + 1, 'Champ': 'Général', 'Message': f"Erreur de structure : La ligne ne contient pas le bon nombre de colonnes (attendu: {EXPECTED_COLUMNS}, trouvé: {len(cleaned_row)}).", 'Valeur': 'Cette ligne n\'est pas affichée dans le tableau.'})
                 continue
             
-            data_rows.append(row)
-            all_errors.extend(validate_row(i + 1, row))
+            data_rows.append(cleaned_row)
+            all_errors.extend(validate_row(i + 1, cleaned_row))
 
-        # --- A
+        # --- AFFICHAGE (ORDRE CONSERVÉ) ---
+        st.header("2. Visualisation des Données")
+        if data_rows:
+            df = pd.DataFrame(data_rows, columns=column_headers)
+            error_row_indices = {error['Ligne'] - 1 for error in all_errors if error['Champ'] != 'Général'}
+            st.dataframe(
+                df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1),
+                use_container_width=True,
+                height=600
+            )
+        elif all_errors:
+             st.warning("Aucune donnée à afficher car toutes les lignes du fichier présentent une erreur de structure.")
+        else:
+             st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
+
+        st.header("3. Rapport d'Erreurs")
+        if not all_errors:
+            st.success("🎉 Félicitations ! Aucune erreur détectée dans le fichier.")
+        else:
+            st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
+            errors_df = pd.DataFrame(all_errors)
+            st.dataframe(errors_df, use_container_width=True)
+
+    st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
+
+# --- BLOC ANTI-PAGE BLANCHE ---
+# Ce bloc "try...except" attrapera n'importe quelle erreur qui pourrait survenir
+# et l'affichera à l'écran au lieu de laisser une page blanche.
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
+        st.error("Détail technique de l'erreur :")
+        st.exception(e)
