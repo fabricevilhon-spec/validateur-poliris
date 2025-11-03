@@ -6,14 +6,14 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.6.0" # Correction de la logique de validation pour les champs vides non-obligatoires
+__version__ = "4.7.0" # Correction finale de la logique de validation des champs vides
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
-# DÉFINITION DU SCHÉMA (C'EST ICI QUE LES RÈGLES SONT DÉFINIES)
+# DÉFINITION DU SCHÉMA
 # =============================================================================
 SCHEMA = [
     {'rang': 1, 'nom': 'Identifiant agence', 'type': 'Entier', 'obligatoire': True},
@@ -22,7 +22,7 @@ SCHEMA = [
     {'rang': 5, 'nom': 'CP', 'type': 'Texte(5)', 'obligatoire': True},
     {'rang': 6, 'nom': 'Ville', 'type': 'Texte', 'obligatoire': True},
     {'rang': 11, 'nom': 'Prix / Loyer / Prix de cession', 'type': 'Décimal', 'obligatoire': True},
-    {'rang': 22, 'nom': 'Date de disponibilité', 'type': 'Date', 'obligatoire': False}, # La règle était déjà bonne ici
+    {'rang': 22, 'nom': 'Date de disponibilité', 'type': 'Date', 'obligatoire': False},
 ]
 nb_champs_definis = len(SCHEMA)
 placeholders = [{'rang': i + 1, 'nom': f'Champ non-défini {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
@@ -55,31 +55,29 @@ def check_valeurs_permises(value, rule):
 
 VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
-# --- LA CORRECTION PRINCIPALE EST DANS CETTE FONCTION ---
 def validate_row(row_num, row_data):
     errors = []
-    annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"').strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
     
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
-        clean_value = field_value.strip('"')
+        # --- LA CORRECTION EST ICI ---
+        clean_value = field_value.strip('"').strip() # On enlève guillemets ET espaces
+        
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
 
-        # Nouvelle logique de validation
         if not clean_value:
-            # Si le champ est vide, on vérifie SEULEMENT s'il était obligatoire.
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
         else:
-            # Si le champ n'est PAS vide, on applique toutes les validations.
             for validation_function in VALIDATION_PIPELINE:
                 error_message = validation_function(clean_value, rule)
                 if error_message:
                     error_template['Message'] = error_message
                     errors.append(error_template)
-                    break # On arrête à la première erreur pour ce champ
+                    break
     return errors
 
 # =============================================================================
@@ -138,7 +136,7 @@ def main():
             if len(fields) != EXPECTED_COLUMNS:
                 all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS}, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
-            data_rows.append([field.strip('"') for field in fields])
+            data_rows.append([field.strip('"').strip() for field in fields]) # Nettoyage pour l'affichage
             all_errors.extend(validate_row(i + 1, fields))
 
         st.header("2. Visualisation des Données")
