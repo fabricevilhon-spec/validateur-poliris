@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
-import csv
 import io
 from datetime import datetime
 
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "3.1.0" # Mise à jour suite à la correction du crash
+__version__ = "3.3.0" # Correction du parsing du délimiteur !# et des guillemets
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -44,7 +43,6 @@ def try_decode(data_bytes):
 def validate_row(row_num, row_data):
     """Valide une ligne et retourne une liste de dictionnaires d'erreurs."""
     errors = []
-    # Note : la validation du nombre de colonnes est maintenant faite en amont.
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         field_name = rule['nom']
@@ -100,48 +98,25 @@ def main():
         
         all_errors = []
         data_rows = []
-        reader = csv.reader(io.StringIO(file_content), delimiter='!', quotechar='"', quoting=csv.QUOTE_ALL)
         
-        for i, row in enumerate(reader):
-            if not any(row): continue
+        # --- NOUVELLE MÉTHODE DE PARSING ---
+        # On lit le fichier ligne par ligne et on split manuellement
+        lines = file_content.strip().splitlines()
+        for i, line in enumerate(lines):
+            if not line: continue
 
+            # 1. On split par le délimiteur '!#'
+            fields = line.split('!#')
+            
+            # 2. On nettoie les guillemets de chaque champ
+            row = [field.strip('"') for field in fields]
+            
+            # 3. On procède à la validation comme avant
             if len(row) != EXPECTED_COLUMNS:
-                all_errors.append({
-                    'Ligne': i + 1,
-                    'Champ': 'Général',
-                    'Message': f"Erreur de structure : La ligne ne contient pas le bon nombre de colonnes (attendu: {EXPECTED_COLUMNS}, trouvé: {len(row)}).",
-                    'Valeur': 'Cette ligne n\'est pas affichée dans le tableau.'
-                })
+                all_errors.append({'Ligne': i + 1, 'Champ': 'Général', 'Message': f"Erreur de structure : La ligne ne contient pas le bon nombre de colonnes (attendu: {EXPECTED_COLUMNS}, trouvé: {len(row)}).", 'Valeur': 'Cette ligne n\'est pas affichée dans le tableau.'})
                 continue
             
             data_rows.append(row)
             all_errors.extend(validate_row(i + 1, row))
 
-        st.header("2. Résultats de l'Analyse")
-
-        if not all_errors:
-            st.success("🎉 Félicitations ! Aucune erreur détectée dans le fichier.")
-        else:
-            st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            errors_df = pd.DataFrame(all_errors)
-            st.write("Rapport détaillé des erreurs :")
-            st.dataframe(errors_df, use_container_width=True)
-        
-        if data_rows:
-            st.header("3. Visualisation des Données")
-            df = pd.DataFrame(data_rows, columns=column_headers)
-            
-            error_row_indices = {error['Ligne'] - 1 for error in all_errors if error['Champ'] != 'Général'}
-
-            st.dataframe(
-                df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1),
-                use_container_width=True,
-                height=600
-            )
-        elif all_errors:
-             st.warning("Aucune donnée à afficher car toutes les lignes du fichier présentent une erreur de structure (nombre de colonnes incorrect).")
-
-    st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
+        # --- A
