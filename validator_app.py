@@ -7,7 +7,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "3.0.0"
+__version__ = "3.1.0" # Mise à jour suite à la correction du crash
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -44,10 +44,7 @@ def try_decode(data_bytes):
 def validate_row(row_num, row_data):
     """Valide une ligne et retourne une liste de dictionnaires d'erreurs."""
     errors = []
-    if len(row_data) != EXPECTED_COLUMNS:
-        errors.append({'Ligne': row_num, 'Champ': 'Général', 'Message': f"Nombre de colonnes incorrect (attendu: {EXPECTED_COLUMNS}, trouvé: {len(row_data)}).", 'Valeur': ''})
-        return errors
-
+    # Note : la validation du nombre de colonnes est maintenant faite en amont.
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         field_name = rule['nom']
@@ -106,9 +103,19 @@ def main():
         reader = csv.reader(io.StringIO(file_content), delimiter='!', quotechar='"', quoting=csv.QUOTE_ALL)
         
         for i, row in enumerate(reader):
-            if any(row):
-                data_rows.append(row)
-                all_errors.extend(validate_row(i + 1, row))
+            if not any(row): continue
+
+            if len(row) != EXPECTED_COLUMNS:
+                all_errors.append({
+                    'Ligne': i + 1,
+                    'Champ': 'Général',
+                    'Message': f"Erreur de structure : La ligne ne contient pas le bon nombre de colonnes (attendu: {EXPECTED_COLUMNS}, trouvé: {len(row)}).",
+                    'Valeur': 'Cette ligne n\'est pas affichée dans le tableau.'
+                })
+                continue
+            
+            data_rows.append(row)
+            all_errors.extend(validate_row(i + 1, row))
 
         st.header("2. Résultats de l'Analyse")
 
@@ -124,16 +131,17 @@ def main():
             st.header("3. Visualisation des Données")
             df = pd.DataFrame(data_rows, columns=column_headers)
             
-            error_row_indices = {error['Ligne'] - 1 for error in all_errors}
+            error_row_indices = {error['Ligne'] - 1 for error in all_errors if error['Champ'] != 'Général'}
 
             st.dataframe(
                 df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1),
                 use_container_width=True,
                 height=600
             )
+        elif all_errors:
+             st.warning("Aucune donnée à afficher car toutes les lignes du fichier présentent une erreur de structure (nombre de colonnes incorrect).")
 
     st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
