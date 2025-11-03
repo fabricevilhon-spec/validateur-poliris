@@ -4,11 +4,12 @@ import io
 from datetime import datetime
 
 # =============================================================================
-# CONFIGURATION
+# DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "1.0.0"
-HEADER_FILE = 'headers.csv'
+__version__ = "9.1.0 (Nettoyage final des données brutes)"
+
 EXPECTED_COLUMNS = 334
+HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
@@ -375,88 +376,55 @@ SCHEMA = [
     {'rang': 333, 'nom': 'Champ Poliris 333', 'type': 'Texte', 'obligatoire': False},
     {'rang': 334, 'nom': 'Champ Poliris 334', 'type': 'Texte', 'obligatoire': False},
 ]
-
-for i in range(26, 335):
-    SCHEMA.append({
-        'rang': i,
-        'nom': f'Champ_{i}',
-        'obligatoire': False,
-        'type': 'Texte'
-    })
-
-# Créer un dictionnaire pour un accès rapide par rang
-SCHEMA_BY_RANG = {rule['rang']: rule for rule in SCHEMA}
+nb_champs_definis = len(SCHEMA)
+placeholders = [{'rang': i + 1, 'nom': f'Champ non-défini {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
+SCHEMA.extend(placeholders)
 
 # =============================================================================
-# FONCTIONS DE VALIDATION
+# BLOC DE VALIDATION MODULAIRE
 # =============================================================================
 def check_obligatoire(value, rule):
-    if rule.get('obligatoire') and not value:
-        return 'Champ obligatoire manquant.'
+    if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
     return None
 
 def check_type_entier(value, rule):
-    if rule.get('type') == 'Entier' and not value.isdigit():
-        return 'Doit être un entier.'
+    if rule.get('type') == 'Entier' and not value.isdigit(): return 'Doit être un entier.'
     return None
 
 def check_type_decimal(value, rule):
-    if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'):
-        return 'Doit être un nombre.'
+    if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'): return 'Doit être un nombre.'
     return None
     
 def check_type_date(value, rule):
     if rule.get('type') == 'Date':
-        try:
-            datetime.strptime(value, '%d/%m/%Y')
-        except ValueError:
-            return f"Format de date invalide. La valeur est {repr(value)}."
+        try: datetime.strptime(value, '%d/%m/%Y')
+        except ValueError: return f"Format de date invalide. La valeur est {repr(value)}."
     return None
 
 def check_valeurs_permises(value, rule):
-    if rule.get('valeurs') and value not in rule.get('valeurs', []):
-        return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
+    if rule.get('valeurs') and value not in rule.get('valeurs', []): return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
 TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
 def validate_row(row_num, row_data):
     errors = []
-    annonce_ref = row_data[REF_ANNONCE_INDEX - 1] if len(row_data) >= REF_ANNONCE_INDEX else 'N/A'
-    
-    # CORRECTION : Utiliser le rang au lieu de l'indice
-    for rang in range(1, len(row_data) + 1):
-        if rang > len(row_data):
-            break
-            
-        clean_value = row_data[rang - 1]  # rang - 1 car les rangs commencent à 1
-        rule = SCHEMA_BY_RANG.get(rang)
-        
-        if not rule:
-            continue
-            
-        error_template = {
-            'Ligne': row_num, 
-            'Référence Annonce': annonce_ref, 
-            'Rang': rule['rang'], 
-            'Champ': rule['nom'], 
-            'Valeur': f'"{clean_value}"'
-        }
-        
+    annonce_ref = row_data[REF_ANNONCE_INDEX] if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    for i, clean_value in enumerate(row_data):
+        rule = SCHEMA[i]
+        error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
             continue
-        
         for validation_function in TYPE_VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
                 break
-    
     return errors
 
 # =============================================================================
@@ -464,10 +432,8 @@ def validate_row(row_num, row_data):
 # =============================================================================
 def try_decode(data_bytes):
     for encoding in ['utf-8', 'ISO-8859-1', 'windows-1252']:
-        try:
-            return data_bytes.decode(encoding), encoding
-        except UnicodeDecodeError:
-            continue
+        try: return data_bytes.decode(encoding), encoding
+        except UnicodeDecodeError: continue
     return None, None
 
 def style_error_rows(row, error_row_indices):
@@ -481,8 +447,7 @@ def main():
     st.title("✅ Validateur de Fichier Poliris")
 
     try:
-        with open(HEADER_FILE, 'rb') as f:
-            header_bytes = f.read()
+        with open(HEADER_FILE, 'rb') as f: header_bytes = f.read()
         decoded_content, _ = try_decode(header_bytes)
         if decoded_content is None:
             st.error(f"Erreur config : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
@@ -515,23 +480,16 @@ def main():
         lines = normalized_content.strip().split('\n')
 
         for i, line in enumerate(lines):
-            if not line:
-                continue
+            if not line: continue
             
             fields = line.split('#')
             
-            # Nettoyage robuste des champs
+            # --- LA CORRECTION EST ICI ---
+            # On applique une séquence de nettoyage robuste à chaque champ
             cleaned_row = [field.rstrip('!').strip('"').strip() for field in fields]
             
             if len(cleaned_row) != EXPECTED_COLUMNS:
-                all_errors.append({
-                    'Ligne': i + 1, 
-                    'Référence Annonce': 'N/A', 
-                    'Rang': 'N/A', 
-                    'Champ': 'Général', 
-                    'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 
-                    'Valeur': 'Ligne non affichée.'
-                })
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
                 
             data_rows.append(cleaned_row)
@@ -543,21 +501,16 @@ def main():
             error_row_indices = {error['Ligne'] - 1 for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         elif all_errors:
-            st.warning("Aucune donnée à afficher car toutes les lignes présentent une erreur de structure majeure.")
+             st.warning("Aucune donnée à afficher car toutes les lignes présentent une erreur de structure majeure.")
         else:
-            st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
+             st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
 
         st.header("3. Rapport d'Erreurs")
         if not all_errors:
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            column_config = {
-                "Ligne": st.column_config.NumberColumn(width="small"), 
-                "Rang": st.column_config.NumberColumn(width="small"), 
-                "Champ": st.column_config.TextColumn(width="medium"), 
-                "Message": st.column_config.TextColumn(width="large")
-            }
+            column_config = {"Ligne": st.column_config.NumberColumn(width="small"), "Rang": st.column_config.NumberColumn(width="small"), "Champ": st.column_config.TextColumn(width="medium"), "Message": st.column_config.TextColumn(width="large")}
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
             st.dataframe(errors_df, column_config=column_config, use_container_width=True)
 
