@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.3.0" # Ajout du numéro de rang dans le rapport d'erreurs
+__version__ = "4.4.0" # Ajout du redimensionnement des colonnes dans le rapport d'erreurs
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -58,21 +58,16 @@ VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal,
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
-    
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         clean_value = field_value.strip('"')
-        
-        # --- MODIFICATION ICI : On ajoute le 'rang' à chaque erreur ---
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
-
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
             continue
-
         for validation_function in VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
@@ -103,24 +98,20 @@ def main():
     try:
         with open(HEADER_FILE, 'rb') as f:
             header_bytes = f.read()
-        
         decoded_content, _ = try_decode(header_bytes)
         if decoded_content is None:
-            st.error(f"Erreur de configuration : Impossible de lire le fichier d'en-têtes `{HEADER_FILE}`. Encodage non supporté.")
+            st.error(f"Erreur de configuration : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
             return
-
         headers_df = pd.read_csv(io.StringIO(decoded_content), header=None, sep=';')
         column_headers = headers_df.iloc[1].tolist()
-        
         if len(column_headers) != EXPECTED_COLUMNS:
-            st.error(f"Erreur de configuration : le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
+            st.error(f"Erreur de configuration : Le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
-            
     except FileNotFoundError:
         st.error(f"Fichier de configuration manquant : `{HEADER_FILE}` introuvable.")
         return
     except IndexError:
-        st.error(f"Erreur de configuration : Impossible de lire la deuxième ligne du fichier d'en-têtes `{HEADER_FILE}`.")
+        st.error(f"Erreur de configuration : Impossible de lire la deuxième ligne de `{HEADER_FILE}`.")
         return
 
     uploaded_file = st.file_uploader("1. Chargez votre fichier d'annonces", type=['csv', 'txt'])
@@ -128,11 +119,9 @@ def main():
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         file_content, detected_encoding = try_decode(file_bytes)
-
         if file_content is None:
             st.error("Impossible de lire le fichier. Aucun encodage compatible trouvé.")
             return
-        
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
         all_errors, data_rows = [], []
@@ -141,8 +130,7 @@ def main():
             if not line: continue
             fields = line.split('!#')
             if len(fields) != EXPECTED_COLUMNS:
-                # --- MODIFICATION ICI : On ajoute le 'Rang' pour les erreurs de structure ---
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS}, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
             data_rows.append([field.strip('"') for field in fields])
             all_errors.extend(validate_row(i + 1, fields))
@@ -162,9 +150,21 @@ def main():
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            # --- MODIFICATION ICI : On ajoute 'Rang' à la liste des colonnes à afficher ---
+            
+            # --- MODIFICATION ICI : On définit une configuration pour les colonnes du rapport d'erreurs ---
+            column_config = {
+                "Ligne": st.column_config.NumberColumn("Ligne", width="small"),
+                "Rang": st.column_config.NumberColumn("Rang", width="small"),
+                "Champ": st.column_config.TextColumn("Champ", width="medium"),
+                "Message": st.column_config.TextColumn("Message", width="large"),
+            }
+            
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
-            st.dataframe(errors_df, use_container_width=True)
+            st.dataframe(
+                errors_df,
+                column_config=column_config,  # On applique la configuration ici
+                use_container_width=True
+            )
 
     st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
 
