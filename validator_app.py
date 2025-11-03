@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import io
-import csv
 from datetime import datetime
 
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "6.0.0 (Refonte de la lecture avec le module CSV)"
+__version__ = "7.0.0 (Refonte Totale de la Logique de Lecture)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -58,10 +57,10 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 
 def validate_row(row_num, row_data):
     errors = []
-    annonce_ref = row_data[REF_ANNONCE_INDEX].strip().strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"').strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
-        clean_value = field_value.strip().strip('"')
+        clean_value = field_value.strip('"').strip()
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
@@ -126,23 +125,25 @@ def main():
         
         all_errors, data_rows = [], []
         
-        # --- LA CORRECTION FINALE EST ICI : On utilise le module CSV ---
-        # 1. On remplace le délimiteur complexe par une tabulation
-        processed_content = file_content.replace('!#', '\t')
-        
-        # 2. On confie le contenu au module CSV, l'expert en la matière
-        reader = csv.reader(io.StringIO(processed_content), delimiter='\t', quotechar='"')
-        
-        for i, row in enumerate(reader):
-            if not row: continue
+        # --- LA CORRECTION FINALE ET ROBUSTE EST ICI ---
+        # 1. On neutralise les "vrais" sauts de ligne (Windows)
+        content_with_placeholders = file_content.replace('\r\n', '__RECORD_SEPARATOR__')
+        # 2. On nettoie les "faux" sauts de ligne (Unix/corrompus) qui restent
+        cleaned_content = content_with_placeholders.replace('\n', ' ')
+        # 3. On split par notre marqueur sûr
+        records = cleaned_content.split('__RECORD_SEPARATOR__')
+
+        for i, record in enumerate(records):
+            if not record: continue
             
-            if len(row) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(row)}). Vérifiez les sauts de ligne.", 'Valeur': 'Ligne non affichée.'})
+            fields = record.split('!#')
+            
+            if len(fields) != EXPECTED_COLUMNS:
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS}, trouvé: {len(fields)}). Vérifiez les sauts de ligne.", 'Valeur': 'Ligne non affichée.'})
                 continue
                 
-            # Les données sont déjà propres, car le module CSV a bien géré les guillemets
-            data_rows.append(row)
-            all_errors.extend(validate_row(i + 1, row))
+            data_rows.append([field.strip('"').strip() for field in fields])
+            all_errors.extend(validate_row(i + 1, fields))
 
         st.header("2. Visualisation des Données")
         if data_rows:
