@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.2.0" # Correction de l'encodage du fichier d'en-têtes
+__version__ = "4.3.0" # Ajout du numéro de rang dans le rapport d'erreurs
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -58,17 +58,26 @@ VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal,
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         clean_value = field_value.strip('"')
+        
+        # --- MODIFICATION ICI : On ajoute le 'rang' à chaque erreur ---
+        error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
+
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
-            if error_message: errors.append({'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Champ': rule['nom'], 'Message': error_message, 'Valeur': f'"{clean_value}"'})
+            if error_message:
+                error_template['Message'] = error_message
+                errors.append(error_template)
             continue
+
         for validation_function in VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
-                errors.append({'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Champ': rule['nom'], 'Message': error_message, 'Valeur': f'"{clean_value}"'})
+                error_template['Message'] = error_message
+                errors.append(error_template)
                 break
     return errors
 
@@ -91,8 +100,6 @@ def main():
     st.set_page_config(layout="wide", page_title="Validateur Figaro Immo")
     st.title("✅ Validateur de Fichier Poliris")
 
-    # --- LA CORRECTION EST ICI ---
-    # On rend la lecture du fichier d'en-têtes aussi intelligente que les autres
     try:
         with open(HEADER_FILE, 'rb') as f:
             header_bytes = f.read()
@@ -134,7 +141,8 @@ def main():
             if not line: continue
             fields = line.split('!#')
             if len(fields) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
+                # --- MODIFICATION ICI : On ajoute le 'Rang' pour les erreurs de structure ---
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
             data_rows.append([field.strip('"') for field in fields])
             all_errors.extend(validate_row(i + 1, fields))
@@ -154,7 +162,8 @@ def main():
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Champ', 'Message', 'Valeur']]
+            # --- MODIFICATION ICI : On ajoute 'Rang' à la liste des colonnes à afficher ---
+            errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
             st.dataframe(errors_df, use_container_width=True)
 
     st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
