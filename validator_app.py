@@ -6,11 +6,10 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.0.0" # Refactoring pour la maintenabilité, ajout ref. annonce, en-têtes figés
+__version__ = "4.2.0" # Correction de l'encodage du fichier d'en-têtes
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
-# On définit ici l'index de la colonne qui contient la référence de l'annonce (2ème colonne -> index 1)
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
@@ -30,86 +29,59 @@ placeholders = [{'rang': i + 1, 'nom': f'Champ non-défini {i+1}', 'type': 'Text
 SCHEMA.extend(placeholders)
 
 # =============================================================================
-# BLOC DE VALIDATION MODULAIRE (PRÊT POUR LE FUTUR)
+# BLOC DE VALIDATION MODULAIRE
 # =============================================================================
-# Chaque fonction est un "ouvrier spécialisé" qui fait une seule vérification.
-
 def check_obligatoire(value, rule):
-    if rule.get('obligatoire') and not value:
-        return 'Le champ obligatoire est vide.'
+    if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
     return None
 
 def check_type_entier(value, rule):
-    if rule.get('type') == 'Entier' and not value.isdigit():
-        return 'Doit être un entier.'
+    if rule.get('type') == 'Entier' and not value.isdigit(): return 'Doit être un entier.'
     return None
 
 def check_type_decimal(value, rule):
-    if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'):
-        return 'Doit être un nombre.'
+    if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'): return 'Doit être un nombre.'
     return None
     
 def check_type_date(value, rule):
     if rule.get('type') == 'Date':
-        try:
-            datetime.strptime(value, '%d/%m/%Y')
-        except ValueError:
-            return 'Format de date invalide (attendu: JJ/MM/AAAA).'
+        try: datetime.strptime(value, '%d/%m/%Y')
+        except ValueError: return 'Format de date invalide (attendu: JJ/MM/AAAA).'
     return None
 
 def check_valeurs_permises(value, rule):
-    if rule.get('valeurs') and value not in rule.get('valeurs', []):
-        return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
+    if rule.get('valeurs') and value not in rule.get('valeurs', []): return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-# Ajoutez ici vos futures fonctions de validation (ex: check_longueur_max, check_format_email, etc.)
+VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
-# La liste de tous nos "ouvriers" à faire travailler sur chaque champ.
-VALIDATION_PIPELINE = [
-    check_obligatoire,
-    check_type_entier,
-    check_type_decimal,
-    check_type_date,
-    check_valeurs_permises,
-]
-
-# Le "chef d'atelier" qui orchestre la validation
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
-    
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         clean_value = field_value.strip('"')
-        
-        # On ne valide que les champs non vides, sauf pour la règle "obligatoire"
         if not clean_value:
             error_message = check_obligatoire(clean_value, rule)
-            if error_message:
-                errors.append({'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Champ': rule['nom'], 'Message': error_message, 'Valeur': f'"{clean_value}"'})
+            if error_message: errors.append({'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Champ': rule['nom'], 'Message': error_message, 'Valeur': f'"{clean_value}"'})
             continue
-
         for validation_function in VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
                 errors.append({'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Champ': rule['nom'], 'Message': error_message, 'Valeur': f'"{clean_value}"'})
-                break # On arrête à la première erreur pour ce champ pour ne pas surcharger
+                break
     return errors
 
 # =============================================================================
-# FONCTIONS UTILITAIRES (inchangées)
+# FONCTIONS UTILITAIRES
 # =============================================================================
 def try_decode(data_bytes):
-    """Tente de décoder les données avec une liste d'encodages courants."""
     for encoding in ['utf-8', 'ISO-8859-1', 'windows-1252']:
-        try:
-            return data_bytes.decode(encoding), encoding
-        except UnicodeDecodeError:
-            continue
+        try: return data_bytes.decode(encoding), encoding
+        except UnicodeDecodeError: continue
     return None, None
 
 def style_error_rows(row, error_row_indices):
-    """Applique un style à toute la ligne si son index est dans la liste des erreurs."""
     return ['background-color: rgba(255, 204, 204, 0.6)'] * len(row) if row.name in error_row_indices else [''] * len(row)
 
 # =============================================================================
@@ -119,14 +91,29 @@ def main():
     st.set_page_config(layout="wide", page_title="Validateur Figaro Immo")
     st.title("✅ Validateur de Fichier Poliris")
 
+    # --- LA CORRECTION EST ICI ---
+    # On rend la lecture du fichier d'en-têtes aussi intelligente que les autres
     try:
-        headers_df = pd.read_csv(HEADER_FILE, header=None, encoding='ISO-8859-1', sep=';')
-        column_headers = headers_df.iloc[1].tolist() # On lit la deuxième ligne (index 1)
+        with open(HEADER_FILE, 'rb') as f:
+            header_bytes = f.read()
+        
+        decoded_content, _ = try_decode(header_bytes)
+        if decoded_content is None:
+            st.error(f"Erreur de configuration : Impossible de lire le fichier d'en-têtes `{HEADER_FILE}`. Encodage non supporté.")
+            return
+
+        headers_df = pd.read_csv(io.StringIO(decoded_content), header=None, sep=';')
+        column_headers = headers_df.iloc[1].tolist()
+        
         if len(column_headers) != EXPECTED_COLUMNS:
             st.error(f"Erreur de configuration : le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
+            
     except FileNotFoundError:
         st.error(f"Fichier de configuration manquant : `{HEADER_FILE}` introuvable.")
+        return
+    except IndexError:
+        st.error(f"Erreur de configuration : Impossible de lire la deuxième ligne du fichier d'en-têtes `{HEADER_FILE}`.")
         return
 
     uploaded_file = st.file_uploader("1. Chargez votre fichier d'annonces", type=['csv', 'txt'])
@@ -141,21 +128,15 @@ def main():
         
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
-        all_errors = []
-        data_rows = []
-        
+        all_errors, data_rows = [], []
         lines = file_content.strip().splitlines()
         for i, line in enumerate(lines):
             if not line: continue
-            
             fields = line.split('!#')
-            # Le nettoyage final des guillemets se fera dans la validation, on garde la donnée brute ici.
-            
             if len(fields) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure de ligne (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
                 continue
-            
-            data_rows.append([field.strip('"') for field in fields]) # On nettoie pour l'affichage
+            data_rows.append([field.strip('"') for field in fields])
             all_errors.extend(validate_row(i + 1, fields))
 
         st.header("2. Visualisation des Données")
@@ -164,7 +145,7 @@ def main():
             error_row_indices = {error['Ligne'] - 1 for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         elif all_errors:
-             st.warning("Aucune donnée à afficher car toutes les lignes du fichier présentent une erreur de structure majeure.")
+             st.warning("Aucune donnée à afficher car toutes les lignes présentent une erreur de structure majeure.")
         else:
              st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
 
@@ -173,7 +154,6 @@ def main():
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            # On réorganise les colonnes pour une meilleure lisibilité
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Champ', 'Message', 'Valeur']]
             st.dataframe(errors_df, use_container_width=True)
 
@@ -185,4 +165,3 @@ if __name__ == "__main__":
     except Exception as e:
         st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
         st.exception(e)
-
