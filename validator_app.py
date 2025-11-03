@@ -6,14 +6,14 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "4.4.0" # Ajout du redimensionnement des colonnes dans le rapport d'erreurs
+__version__ = "4.6.0" # Correction de la logique de validation pour les champs vides non-obligatoires
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
-# DÉFINITION DU SCHÉMA (Extrait pour la démonstration)
+# DÉFINITION DU SCHÉMA (C'EST ICI QUE LES RÈGLES SONT DÉFINIES)
 # =============================================================================
 SCHEMA = [
     {'rang': 1, 'nom': 'Identifiant agence', 'type': 'Entier', 'obligatoire': True},
@@ -22,7 +22,7 @@ SCHEMA = [
     {'rang': 5, 'nom': 'CP', 'type': 'Texte(5)', 'obligatoire': True},
     {'rang': 6, 'nom': 'Ville', 'type': 'Texte', 'obligatoire': True},
     {'rang': 11, 'nom': 'Prix / Loyer / Prix de cession', 'type': 'Décimal', 'obligatoire': True},
-    {'rang': 22, 'nom': 'Date de disponibilité', 'type': 'Date', 'obligatoire': False},
+    {'rang': 22, 'nom': 'Date de disponibilité', 'type': 'Date', 'obligatoire': False}, # La règle était déjà bonne ici
 ]
 nb_champs_definis = len(SCHEMA)
 placeholders = [{'rang': i + 1, 'nom': f'Champ non-défini {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
@@ -55,25 +55,31 @@ def check_valeurs_permises(value, rule):
 
 VALIDATION_PIPELINE = [check_obligatoire, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
+# --- LA CORRECTION PRINCIPALE EST DANS CETTE FONCTION ---
 def validate_row(row_num, row_data):
     errors = []
     annonce_ref = row_data[REF_ANNONCE_INDEX].strip('"') if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    
     for i, field_value in enumerate(row_data):
         rule = SCHEMA[i]
         clean_value = field_value.strip('"')
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
+
+        # Nouvelle logique de validation
         if not clean_value:
+            # Si le champ est vide, on vérifie SEULEMENT s'il était obligatoire.
             error_message = check_obligatoire(clean_value, rule)
             if error_message:
                 error_template['Message'] = error_message
                 errors.append(error_template)
-            continue
-        for validation_function in VALIDATION_PIPELINE:
-            error_message = validation_function(clean_value, rule)
-            if error_message:
-                error_template['Message'] = error_message
-                errors.append(error_template)
-                break
+        else:
+            # Si le champ n'est PAS vide, on applique toutes les validations.
+            for validation_function in VALIDATION_PIPELINE:
+                error_message = validation_function(clean_value, rule)
+                if error_message:
+                    error_template['Message'] = error_message
+                    errors.append(error_template)
+                    break # On arrête à la première erreur pour ce champ
     return errors
 
 # =============================================================================
@@ -150,21 +156,9 @@ def main():
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            
-            # --- MODIFICATION ICI : On définit une configuration pour les colonnes du rapport d'erreurs ---
-            column_config = {
-                "Ligne": st.column_config.NumberColumn("Ligne", width="small"),
-                "Rang": st.column_config.NumberColumn("Rang", width="small"),
-                "Champ": st.column_config.TextColumn("Champ", width="medium"),
-                "Message": st.column_config.TextColumn("Message", width="large"),
-            }
-            
+            column_config = {"Ligne": st.column_config.NumberColumn(width="small"), "Rang": st.column_config.NumberColumn(width="small"), "Champ": st.column_config.TextColumn(width="medium"), "Message": st.column_config.TextColumn(width="large")}
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
-            st.dataframe(
-                errors_df,
-                column_config=column_config,  # On applique la configuration ici
-                use_container_width=True
-            )
+            st.dataframe(errors_df, column_config=column_config, use_container_width=True)
 
     st.markdown(f'<div style="text-align: center; color: grey; font-size: 0.8em; padding-top: 2em;">Version {__version__}</div>', unsafe_allow_html=True)
 
