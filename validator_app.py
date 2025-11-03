@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "9.0.0 (Méthode de Lecture Brute-Force)"
+__version__ = "9.1.0 (Nettoyage final des données brutes)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -57,7 +57,7 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 
 def validate_row(row_num, row_data):
     errors = []
-    annonce_ref = row_data[REF_ANNONCE_INDEX].strip() if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    annonce_ref = row_data[REF_ANNONCE_INDEX] if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
     for i, clean_value in enumerate(row_data):
         rule = SCHEMA[i]
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
@@ -124,26 +124,17 @@ def main():
         
         all_errors, data_rows = [], []
         
-        # --- LOGIQUE DE LECTURE "BRUTE-FORCE" SELON VOTRE SUGGESTION ---
-        # 1. On normalise tous les types de sauts de ligne en un seul (\n)
         normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
-        # 2. On sépare le fichier en lignes
         lines = normalized_content.strip().split('\n')
 
         for i, line in enumerate(lines):
             if not line: continue
             
-            # 3. On split par '#' (votre suggestion)
             fields = line.split('#')
             
-            # 4. On nettoie chaque champ (on retire les '!' au début et les guillemets autour)
-            # Pour le premier champ, on retire juste les guillemets
-            # Pour les autres, on retire le '!' potentiel au début, PUIS les guillemets.
-            cleaned_row = []
-            if fields:
-                cleaned_row.append(fields[0].strip('"').strip())
-                for field in fields[1:]:
-                    cleaned_row.append(field.lstrip('!').strip('"').strip())
+            # --- LA CORRECTION EST ICI ---
+            # On applique une séquence de nettoyage robuste à chaque champ
+            cleaned_row = [field.rstrip('!').strip('"').strip() for field in fields]
             
             if len(cleaned_row) != EXPECTED_COLUMNS:
                 all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 'Valeur': 'Ligne non affichée.'})
