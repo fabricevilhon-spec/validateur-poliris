@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "12.1.0 (Validation insensible à la casse)"
+__version__ = "12.2.0 (Validation des valeurs tolérante aux tirets)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -20,8 +20,8 @@ MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 KNOWN_FIELDS = {
     1: {'nom': 'Identifiant agence', 'type': 'Entier'},
     2: {'nom': 'Référence agence du bien', 'type': 'Texte'},
-    3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente de prestige", "vente fonds-de-commerce", "viager"]},
-    4: {'nom': 'Type de bien', 'type': 'Texte'}, # Vous pouvez ajouter une liste de 'valeurs' ici
+    3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente de prestige", "vente-fonds-de-commerce", "viager"]},
+    4: {'nom': 'Type de bien', 'type': 'Texte'},
     5: {'nom': 'CP', 'type': 'Texte'},
     6: {'nom': 'Ville', 'type': 'Texte'},
     11: {'nom': 'Prix', 'type': 'Décimal'},
@@ -66,12 +66,14 @@ def check_type_date(value, rule):
 
 # --- LA CORRECTION EST ICI ---
 def check_valeurs_permises(value, rule):
-    """Vérifie si la valeur fait partie d'une liste prédéfinie, en ignorant la casse."""
+    """Vérifie si la valeur fait partie d'une liste, en ignorant casse et tirets."""
     allowed_values = rule.get('valeurs')
     if allowed_values:
-        # On compare tout en minuscules pour être insensible à la casse
-        allowed_values_lower = [str(v).lower() for v in allowed_values]
-        if value.lower() not in allowed_values_lower:
+        # Normalisation : on passe tout en minuscule et on remplace les tirets par des espaces pour la comparaison
+        normalized_input = value.lower().replace('-', ' ')
+        normalized_allowed = [str(v).lower().replace('-', ' ') for v in allowed_values]
+        
+        if normalized_input not in normalized_allowed:
             return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
