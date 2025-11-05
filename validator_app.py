@@ -6,14 +6,14 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "9.1.0 (Nettoyage final des données brutes)"
+__version__ = "10.0.0 (Réparation de la logique de parsing !#)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
-# DÉFINITION COMPLÈTE ET DÉTAILLÉE DU SCHÉMA (votre "base de règles")
+# DÉFINITION DU SCHÉMA
 # =============================================================================
 SCHEMA = [
    {'rang': 1, 'nom': 'Identifiant agence', 'obligatoire': True, 'type': 'Entier', 'maxLength': 20},
@@ -352,9 +352,12 @@ SCHEMA = [
     {'rang': 334, 'nom': 'Conso énergie finale', 'obligatoire': False, 'type': 'Entier'}
 ]
 
+# Remplissage automatique pour atteindre 334, en attendant votre schéma complet
 nb_champs_definis = len(SCHEMA)
-placeholders = [{'rang': i + 1, 'nom': f'Champ non-défini {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
-SCHEMA.extend(placeholders)
+if nb_champs_definis < 334:
+    placeholders = [{'rang': i + 1, 'nom': f'Champ Poliris {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
+    SCHEMA.extend(placeholders)
+
 
 # =============================================================================
 # BLOC DE VALIDATION MODULAIRE
@@ -458,11 +461,12 @@ def main():
         for i, line in enumerate(lines):
             if not line: continue
             
-            fields = line.split('#')
+            # --- LA CORRECTION FINALE ET DÉFINITIVE EST ICI ---
+            # On splitte par le VRAI délimiteur de deux caractères
+            fields = line.split('!#')
             
-            # --- LA CORRECTION EST ICI ---
-            # On applique une séquence de nettoyage robuste à chaque champ
-            cleaned_row = [field.rstrip('!').strip('"').strip() for field in fields]
+            # On nettoie juste les guillemets et les espaces de chaque champ
+            cleaned_row = [field.strip('"').strip() for field in fields]
             
             if len(cleaned_row) != EXPECTED_COLUMNS:
                 all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 'Valeur': 'Ligne non affichée.'})
