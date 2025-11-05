@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "10.0.0 (Réparation de la logique de parsing !#)"
+__version__ = "11.0.0 (Correction du bug du délimiteur final)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -351,16 +351,14 @@ SCHEMA = [
     {'rang': 333, 'nom': 'Encadrement des loyers', 'obligatoire': False, 'type': 'Texte', 'valeurs': ['oui', 'non'], 'maxLength': 3},
     {'rang': 334, 'nom': 'Conso énergie finale', 'obligatoire': False, 'type': 'Entier'}
 ]
-
-# Remplissage automatique pour atteindre 334, en attendant votre schéma complet
+# Remplissage automatique pour atteindre 334
 nb_champs_definis = len(SCHEMA)
 if nb_champs_definis < 334:
     placeholders = [{'rang': i + 1, 'nom': f'Champ Poliris {i+1}', 'type': 'Texte', 'obligatoire': False} for i in range(nb_champs_definis, 334)]
     SCHEMA.extend(placeholders)
 
-
 # =============================================================================
-# BLOC DE VALIDATION MODULAIRE
+# BLOC DE VALIDATION MODULAIRE (inchangé)
 # =============================================================================
 def check_obligatoire(value, rule):
     if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
@@ -407,7 +405,7 @@ def validate_row(row_num, row_data):
     return errors
 
 # =============================================================================
-# FONCTIONS UTILITAIRES
+# FONCTIONS UTILITAIRES (inchangées)
 # =============================================================================
 def try_decode(data_bytes):
     for encoding in ['utf-8', 'ISO-8859-1', 'windows-1252']:
@@ -461,11 +459,13 @@ def main():
         for i, line in enumerate(lines):
             if not line: continue
             
-            # --- LA CORRECTION FINALE ET DÉFINITIVE EST ICI ---
-            # On splitte par le VRAI délimiteur de deux caractères
             fields = line.split('!#')
             
-            # On nettoie juste les guillemets et les espaces de chaque champ
+            # --- LA CORRECTION DÉFINITIVE EST ICI ---
+            # Si le split a créé 335 champs et que le dernier est vide, on le supprime.
+            if len(fields) == 335 and fields[334] == '':
+                fields.pop()
+            
             cleaned_row = [field.strip('"').strip() for field in fields]
             
             if len(cleaned_row) != EXPECTED_COLUMNS:
