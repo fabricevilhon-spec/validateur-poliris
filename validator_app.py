@@ -6,14 +6,14 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "12.2.0 (Validation des valeurs tolérante aux tirets)"
+__version__ = "13.0.0 (Ajout du rang dans les en-têtes de colonnes)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
 
 # =============================================================================
-# CONFIGURATION CENTRALE DES RÈGLES (VOTRE "PANNEAU DE CONTRÔLE")
+# CONFIGURATION CENTRALE DES RÈGLES
 # =============================================================================
 MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 
@@ -64,15 +64,11 @@ def check_type_date(value, rule):
         except ValueError: return f"Format de date invalide. La valeur est {repr(value)}."
     return None
 
-# --- LA CORRECTION EST ICI ---
 def check_valeurs_permises(value, rule):
-    """Vérifie si la valeur fait partie d'une liste, en ignorant casse et tirets."""
     allowed_values = rule.get('valeurs')
     if allowed_values:
-        # Normalisation : on passe tout en minuscule et on remplace les tirets par des espaces pour la comparaison
         normalized_input = value.lower().replace('-', ' ')
         normalized_allowed = [str(v).lower().replace('-', ' ') for v in allowed_values]
-        
         if normalized_input not in normalized_allowed:
             return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
@@ -125,15 +121,24 @@ def main():
             st.error(f"Erreur config : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
             return
         headers_df = pd.read_csv(io.StringIO(decoded_content), header=None, sep=';')
-        column_headers = headers_df.iloc[1].tolist()
-        if len(column_headers) != EXPECTED_COLUMNS:
-            st.error(f"Erreur config : Le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
+        
+        # --- LA CORRECTION EST ICI ---
+        # On lit les deux premières lignes pour combiner le rang et le nom
+        ranks = headers_df.iloc[0].astype(str).tolist()
+        names = headers_df.iloc[1].astype(str).tolist()
+        
+        if len(ranks) != EXPECTED_COLUMNS or len(names) != EXPECTED_COLUMNS:
+            st.error(f"Erreur de configuration : le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
+        
+        # On crée les nouveaux en-têtes combinés
+        column_headers = [f"{rank} - {name}" for rank, name in zip(ranks, names)]
+            
     except FileNotFoundError:
-        st.error(f"Fichier config manquant : `{HEADER_FILE}` introuvable.")
+        st.error(f"Fichier de configuration manquant : `{HEADER_FILE}` introuvable.")
         return
     except IndexError:
-        st.error(f"Erreur config : Impossible de lire la 2ème ligne de `{HEADER_FILE}`.")
+        st.error(f"Erreur de configuration : Impossible de lire les deux premières lignes de `{HEADER_FILE}`.")
         return
 
     uploaded_file = st.file_uploader("1. Chargez votre fichier d'annonces", type=['csv', 'txt'])
@@ -170,6 +175,7 @@ def main():
 
         st.header("2. Visualisation des Données")
         if data_rows:
+            # On utilise maintenant nos en-têtes combinés
             df = pd.DataFrame(data_rows, columns=column_headers)
             error_row_indices = {error['Ligne'] - 1 for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
