@@ -6,7 +6,7 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "12.0.0 (Logique de champs obligatoires affinée)"
+__version__ = "12.1.0 (Validation insensible à la casse)"
 
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
@@ -15,18 +15,13 @@ REF_ANNONCE_INDEX = 1
 # =============================================================================
 # CONFIGURATION CENTRALE DES RÈGLES (VOTRE "PANNEAU DE CONTRÔLE")
 # =============================================================================
-
-# --- C'est ici que vous définissez les champs obligatoires ---
-# Il suffit d'ajouter ou de retirer un numéro de rang de cette liste.
 MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 
-# --- Définition des champs connus (pour leur nom et leur type) ---
-# Vous pouvez enrichir cette liste pour affiner la validation d'autres champs.
 KNOWN_FIELDS = {
     1: {'nom': 'Identifiant agence', 'type': 'Entier'},
     2: {'nom': 'Référence agence du bien', 'type': 'Texte'},
     3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente de prestige", "vente fonds-de-commerce", "viager"]},
-    4: {'nom': 'Type de bien', 'type': 'Texte'},
+    4: {'nom': 'Type de bien', 'type': 'Texte'}, # Vous pouvez ajouter une liste de 'valeurs' ici
     5: {'nom': 'CP', 'type': 'Texte'},
     6: {'nom': 'Ville', 'type': 'Texte'},
     11: {'nom': 'Prix', 'type': 'Décimal'},
@@ -37,28 +32,19 @@ KNOWN_FIELDS = {
     175: {'nom': 'Identifiant technique', 'type': 'Texte'},
 }
 
-# --- Génération dynamique du SCHEMA complet ---
 SCHEMA = []
 for i in range(1, 335):
     is_obligatoire = i in MANDATORY_RANKS
-    
     if i in KNOWN_FIELDS:
-        # C'est un champ connu, on utilise ses propriétés
         field_def = KNOWN_FIELDS[i].copy()
         field_def['rang'] = i
         field_def['obligatoire'] = is_obligatoire
     else:
-        # C'est un champ générique
-        field_def = {
-            'rang': i,
-            'nom': f'Champ Poliris {i}',
-            'type': 'Texte', # Par défaut, on considère que c'est du texte
-            'obligatoire': is_obligatoire
-        }
+        field_def = {'rang': i, 'nom': f'Champ Poliris {i}', 'type': 'Texte', 'obligatoire': is_obligatoire}
     SCHEMA.append(field_def)
 
 # =============================================================================
-# BLOC DE VALIDATION MODULAIRE (inchangé)
+# BLOC DE VALIDATION MODULAIRE
 # =============================================================================
 def check_obligatoire(value, rule):
     if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
@@ -78,8 +64,15 @@ def check_type_date(value, rule):
         except ValueError: return f"Format de date invalide. La valeur est {repr(value)}."
     return None
 
+# --- LA CORRECTION EST ICI ---
 def check_valeurs_permises(value, rule):
-    if rule.get('valeurs') and value not in rule.get('valeurs', []): return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
+    """Vérifie si la valeur fait partie d'une liste prédéfinie, en ignorant la casse."""
+    allowed_values = rule.get('valeurs')
+    if allowed_values:
+        # On compare tout en minuscules pour être insensible à la casse
+        allowed_values_lower = [str(v).lower() for v in allowed_values]
+        if value.lower() not in allowed_values_lower:
+            return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
 TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
@@ -105,7 +98,7 @@ def validate_row(row_num, row_data):
     return errors
 
 # =============================================================================
-# FONCTIONS UTILITAIRES (inchangées)
+# FONCTIONS UTILITAIRES
 # =============================================================================
 def try_decode(data_bytes):
     for encoding in ['utf-8', 'ISO-8859-1', 'windows-1252']:
