@@ -6,8 +6,8 @@ from datetime import datetime
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
-__version__ = "13.0.0 (Ajout du rang dans les en-têtes de colonnes)"
-
+# MODIFIÉ : Mise à jour de la version pour refléter la nouvelle fonctionnalité
+__version__ = "14.0.0 (Ajout du téléchargement Excel)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -20,7 +20,7 @@ MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 KNOWN_FIELDS = {
     1: {'nom': 'Identifiant agence', 'type': 'Entier'},
     2: {'nom': 'Référence agence du bien', 'type': 'Texte'},
-    3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente de prestige", "vente-fonds-de-commerce", "viager"]},
+    3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente-de-prestige", "vente-fonds-de-commerce", "viager"]},
     4: {'nom': 'Type de bien', 'type': 'Texte'},
     5: {'nom': 'CP', 'type': 'Texte'},
     6: {'nom': 'Ville', 'type': 'Texte'},
@@ -51,22 +51,28 @@ def check_obligatoire(value, rule):
     return None
 
 def check_type_entier(value, rule):
-    if rule.get('type') == 'Entier' and not value.isdigit(): return 'Doit être un entier.'
+    if rule.get('type') == 'Entier' and value and not value.isdigit(): return 'Doit être un entier.'
     return None
 
 def check_type_decimal(value, rule):
-    if rule.get('type') == 'Décimal' and not pd.to_numeric(value.replace(',', '.'), errors='coerce'): return 'Doit être un nombre.'
+    if rule.get('type') == 'Décimal' and value:
+        try:
+            pd.to_numeric(value.replace(',', '.'))
+        except (ValueError, TypeError):
+            return 'Doit être un nombre.'
     return None
     
 def check_type_date(value, rule):
-    if rule.get('type') == 'Date':
-        try: datetime.strptime(value, '%d/%m/%Y')
-        except ValueError: return f"Format de date invalide. La valeur est {repr(value)}."
+    if rule.get('type') == 'Date' and value:
+        try:
+            datetime.strptime(value, '%d/%m/%Y')
+        except ValueError:
+            return f"Format de date invalide. Attendu JJ/MM/AAAA, mais la valeur est {repr(value)}."
     return None
 
 def check_valeurs_permises(value, rule):
     allowed_values = rule.get('valeurs')
-    if allowed_values:
+    if allowed_values and value:
         normalized_input = value.lower().replace('-', ' ')
         normalized_allowed = [str(v).lower().replace('-', ' ') for v in allowed_values]
         if normalized_input not in normalized_allowed:
@@ -81,12 +87,16 @@ def validate_row(row_num, row_data):
     for i, clean_value in enumerate(row_data):
         rule = SCHEMA[i]
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
-        if not clean_value:
-            error_message = check_obligatoire(clean_value, rule)
-            if error_message:
-                error_template['Message'] = error_message
-                errors.append(error_template)
+        
+        error_message = check_obligatoire(clean_value, rule)
+        if error_message:
+            error_template['Message'] = error_message
+            errors.append(error_template)
             continue
+
+        if not clean_value:
+            continue
+
         for validation_function in TYPE_VALIDATION_PIPELINE:
             error_message = validation_function(clean_value, rule)
             if error_message:
@@ -100,12 +110,23 @@ def validate_row(row_num, row_data):
 # =============================================================================
 def try_decode(data_bytes):
     for encoding in ['utf-8', 'ISO-8859-1', 'windows-1252']:
-        try: return data_bytes.decode(encoding), encoding
-        except UnicodeDecodeError: continue
+        try:
+            return data_bytes.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue
     return None, None
 
 def style_error_rows(row, error_row_indices):
     return ['background-color: rgba(255, 204, 204, 0.6)'] * len(row) if row.name in error_row_indices else [''] * len(row)
+
+# NOUVEAU : Fonction pour convertir le DataFrame en fichier Excel en mémoire
+def to_excel(df):
+    """Convertit un DataFrame en un fichier Excel binaire."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Données Validées')
+    processed_data = output.getvalue()
+    return processed_data
 
 # =============================================================================
 # INTERFACE PRINCIPALE (STREAMLIT)
@@ -115,23 +136,21 @@ def main():
     st.title("✅ Validateur de Fichier Poliris")
 
     try:
-        with open(HEADER_FILE, 'rb') as f: header_bytes = f.read()
+        with open(HEADER_FILE, 'rb') as f:
+            header_bytes = f.read()
         decoded_content, _ = try_decode(header_bytes)
         if decoded_content is None:
             st.error(f"Erreur config : Impossible de lire `{HEADER_FILE}`. Encodage non supporté.")
             return
+
         headers_df = pd.read_csv(io.StringIO(decoded_content), header=None, sep=';')
-        
-        # --- LA CORRECTION EST ICI ---
-        # On lit les deux premières lignes pour combiner le rang et le nom
         ranks = headers_df.iloc[0].astype(str).tolist()
         names = headers_df.iloc[1].astype(str).tolist()
-        
+
         if len(ranks) != EXPECTED_COLUMNS or len(names) != EXPECTED_COLUMNS:
             st.error(f"Erreur de configuration : le fichier d'en-têtes `{HEADER_FILE}` est incorrect.")
             return
-        
-        # On crée les nouveaux en-têtes combinés
+            
         column_headers = [f"{rank} - {name}" for rank, name in zip(ranks, names)]
             
     except FileNotFoundError:
@@ -142,20 +161,19 @@ def main():
         return
 
     uploaded_file = st.file_uploader("1. Chargez votre fichier d'annonces", type=['csv', 'txt'])
-
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         file_content, detected_encoding = try_decode(file_bytes)
         if file_content is None:
             st.error("Impossible de lire le fichier. Aucun encodage compatible trouvé.")
             return
+            
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
         all_errors, data_rows = [], []
         
         normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
         lines = normalized_content.strip().split('\n')
-
         for i, line in enumerate(lines):
             if not line: continue
             
@@ -175,16 +193,27 @@ def main():
 
         st.header("2. Visualisation des Données")
         if data_rows:
-            # On utilise maintenant nos en-têtes combinés
             df = pd.DataFrame(data_rows, columns=column_headers)
             error_row_indices = {error['Ligne'] - 1 for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
+        
+            # NOUVEAU : Section pour le téléchargement
+            st.header("3. Télécharger les données")
+            excel_data = to_excel(df)
+            st.download_button(
+                label="📥 Télécharger en format Excel",
+                data=excel_data,
+                file_name=f'donnees_validees_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        
         elif all_errors:
              st.warning("Aucune donnée à afficher car toutes les lignes présentent une erreur de structure majeure.")
         else:
              st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
 
-        st.header("3. Rapport d'Erreurs")
+        # MODIFIÉ : Changement de numéro pour la section des erreurs
+        st.header("4. Rapport d'Erreurs")
         if not all_errors:
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
@@ -201,3 +230,4 @@ if __name__ == "__main__":
     except Exception as e:
         st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
         st.exception(e)
+
