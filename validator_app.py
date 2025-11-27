@@ -3,6 +3,9 @@ import pandas as pd
 import io
 from datetime import datetime
 
+# Augmente la limite de cellules (suffisant pour environ 6000 annonces complètes)
+pd.set_option("styler.render.max_elements", 2_000_000)
+
 # =============================================================================
 # DÉFINITION DE LA VERSION ET CONFIGURATION
 # =============================================================================
