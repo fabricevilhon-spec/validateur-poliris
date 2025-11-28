@@ -184,6 +184,30 @@ def main():
             
             if len(fields) == 335 and fields[334] == '':
                 fields.pop()
+
+# =================================================================
+            # NOUVEAU : Règle de vérification des guillemets ("")
+            # =================================================================
+            # On tente de récupérer la référence brute pour le rapport d'erreur (si elle existe)
+            raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
+            
+            for idx, raw_val in enumerate(fields):
+                # La règle : doit commencer ET finir par un guillemet
+                # Exemples valides : "texte", ""
+                # Exemples invalides : texte, "texte, texte"
+                if not (raw_val.startswith('"') and raw_val.endswith('"')):
+                    # On récupère le nom du champ via le SCHEMA global
+                    field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
+                    
+                    all_errors.append({
+                        'Ligne': i + 1,
+                        'Référence Annonce': raw_ref,
+                        'Rang': idx + 1,
+                        'Champ': field_name,
+                        'Message': 'Format CSV invalide : Le champ n\'est pas encapsulé dans des guillemets ("").',
+                        'Valeur': raw_val
+                    })
+            # =================================================================
             
             cleaned_row = [field.strip('"').strip() for field in fields]
             
