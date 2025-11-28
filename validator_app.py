@@ -174,6 +174,8 @@ def main():
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
         all_errors, data_rows = [], []
+
+		seen_references = set()
         
         normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
         lines = normalized_content.strip().split('\n')
