@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
-from collections import Counter
 
 # =============================================================================
 # CORRECTIF MÉMOIRE ET VERSION
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.2.0 (Doublons Multiples + Index Fixe)"
+__version__ = "14.3.0 (Détail des lignes doublons)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -177,22 +176,22 @@ def main():
         lines = normalized_content.strip().split('\n')
         
         # =================================================================
-        # ÉTAPE 1 : Pré-analyse pour identifier TOUS les doublons
+        # ÉTAPE 1 : Pré-analyse pour cartographier les lignes des références
         # =================================================================
-        all_refs_found = []
-        for line in lines:
+        # Dictionnaire : { "REF123": [1, 56], "REF456": [2] }
+        ref_locations = {}
+        
+        for i, line in enumerate(lines):
             if not line: continue
             temp_fields = line.split('!#')
             if len(temp_fields) > REF_ANNONCE_INDEX:
                 # On récupère la ref propre
                 r = temp_fields[REF_ANNONCE_INDEX].strip('"').strip()
                 if r:
-                    all_refs_found.append(r)
-        
-        # On compte les occurrences de chaque référence
-        ref_counts = Counter(all_refs_found)
-        # On crée un set des refs qui apparaissent plus d'une fois
-        duplicate_refs_set = {ref for ref, count in ref_counts.items() if count > 1}
+                    if r not in ref_locations:
+                        ref_locations[r] = []
+                    # On stocke le numéro de ligne (index 0 transformé en 1)
+                    ref_locations[r].append(i + 1)
         # =================================================================
 
         # ÉTAPE 2 : Traitement ligne par ligne
@@ -226,18 +225,23 @@ def main():
                     })
 
             # =================================================================
-            # Nouvelle Règle Doublons : Vérifie si la ref est dans la liste "noire"
+            # Nouvelle Règle Doublons : Vérifie si la ref est présente plusieurs fois
             # =================================================================
             clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip()
-            if clean_ref_for_check and clean_ref_for_check in duplicate_refs_set:
-                count = ref_counts[clean_ref_for_check]
+            
+            # Si la ref existe et que sa liste de positions contient plus d'1 élément
+            if clean_ref_for_check and len(ref_locations.get(clean_ref_for_check, [])) > 1:
+                locations = ref_locations[clean_ref_for_check]
+                count = len(locations)
+                # On transforme la liste [1, 56] en chaîne "1, 56"
+                locs_str = ", ".join(map(str, locations))
+                
                 all_errors.append({
                     'Ligne': i + 1,
                     'Référence Annonce': clean_ref_for_check,
                     'Rang': 2,
                     'Champ': "Référence agence du bien",
-                    # Le message indique maintenant combien de fois elle apparait au total
-                    'Message': f"Référence multiple détectée : Présente {count} fois dans le fichier.",
+                    'Message': f"Référence multiple détectée : Présente {count} fois (lignes : {locs_str}).",
                     'Valeur': clean_ref_for_check
                 })
             # =================================================================
@@ -250,12 +254,10 @@ def main():
         if data_rows:
             df = pd.DataFrame(data_rows, columns=column_headers)
             
-            # =================================================================
-            # Nouvelle numérotation : On fait commencer l'index à 1
-            # =================================================================
+            # Nouvelle numérotation (Index commence à 1)
             df.index = df.index + 1
             
-            error_row_indices = {error['Ligne'] for error in all_errors} # Plus besoin de -1 car df.index match
+            error_row_indices = {error['Ligne'] for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         
             st.header("3. Télécharger les données")
