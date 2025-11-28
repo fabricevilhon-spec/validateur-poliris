@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
+from collections import Counter
 
 # =============================================================================
 # CORRECTIF MÉMOIRE ET VERSION
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.3.0 (Détail des lignes doublons)"
+__version__ = "14.4.0 (Structure Flexible + Doublons détaillés)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -84,7 +85,9 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 
 def validate_row(row_num, row_data):
     errors = []
+    # Note : row_data est garanti d'avoir 334 colonnes grâce au padding effectué avant l'appel
     annonce_ref = row_data[REF_ANNONCE_INDEX] if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
+    
     for i, clean_value in enumerate(row_data):
         rule = SCHEMA[i]
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
@@ -176,21 +179,17 @@ def main():
         lines = normalized_content.strip().split('\n')
         
         # =================================================================
-        # ÉTAPE 1 : Pré-analyse pour cartographier les lignes des références
+        # ÉTAPE 1 : Pré-analyse pour cartographier les doublons
         # =================================================================
-        # Dictionnaire : { "REF123": [1, 56], "REF456": [2] }
         ref_locations = {}
-        
         for i, line in enumerate(lines):
             if not line: continue
             temp_fields = line.split('!#')
             if len(temp_fields) > REF_ANNONCE_INDEX:
-                # On récupère la ref propre
                 r = temp_fields[REF_ANNONCE_INDEX].strip('"').strip()
                 if r:
                     if r not in ref_locations:
                         ref_locations[r] = []
-                    # On stocke le numéro de ligne (index 0 transformé en 1)
                     ref_locations[r].append(i + 1)
         # =================================================================
 
@@ -200,17 +199,37 @@ def main():
             
             fields = line.split('!#')
             
+            # Nettoyage de la fin de ligne "classique" Poliris (!# à la fin)
             if len(fields) == 335 and fields[334] == '':
                 fields.pop()
             
-            # Vérification structurelle
-            if len(fields) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
-                continue
+            # =================================================================
+            # MODIFIÉ : Vérification structurelle FLEXIBLE
+            # =================================================================
+            current_len = len(fields)
+            if current_len != EXPECTED_COLUMNS:
+                msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
+                
+                if current_len < EXPECTED_COLUMNS:
+                    msg += " Les colonnes manquantes ont été ajoutées (vides) pour permettre le traitement."
+                else:
+                    msg += " Les colonnes excédentaires ont été ignorées."
 
-            # Règle des guillemets
+                all_errors.append({
+                    'Ligne': i + 1,
+                    'Référence Annonce': 'Inconnue/Partielle',
+                    'Rang': 'Général',
+                    'Champ': 'Structure du fichier',
+                    'Message': msg,
+                    'Valeur': f'{current_len} cols'
+                })
+                # On ne fait plus "continue", on continue le traitement !
+            # =================================================================
+
+            # Règle des guillemets (sur les champs existants uniquement)
             raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             for idx, raw_val in enumerate(fields):
+                # On ne vérifie que ce qui existe dans le fichier
                 is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
                 if not is_valid_quote:
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
@@ -224,18 +243,12 @@ def main():
                         'Valeur': valeur_affichee
                     })
 
-            # =================================================================
-            # Nouvelle Règle Doublons : Vérifie si la ref est présente plusieurs fois
-            # =================================================================
-            clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip()
-            
-            # Si la ref existe et que sa liste de positions contient plus d'1 élément
+            # Règle Doublons
+            clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip() if len(fields) > REF_ANNONCE_INDEX else ""
             if clean_ref_for_check and len(ref_locations.get(clean_ref_for_check, [])) > 1:
                 locations = ref_locations[clean_ref_for_check]
                 count = len(locations)
-                # On transforme la liste [1, 56] en chaîne "1, 56"
                 locs_str = ", ".join(map(str, locations))
-                
                 all_errors.append({
                     'Ligne': i + 1,
                     'Référence Annonce': clean_ref_for_check,
@@ -244,17 +257,25 @@ def main():
                     'Message': f"Référence multiple détectée : Présente {count} fois (lignes : {locs_str}).",
                     'Valeur': clean_ref_for_check
                 })
-            # =================================================================
 
+            # =================================================================
+            # NORMALISATION pour la validation de contenu
+            # =================================================================
             cleaned_row = [field.strip('"').strip() for field in fields]
+            
+            # Si pas assez de colonnes : on complète avec des vides pour éviter le crash
+            if len(cleaned_row) < EXPECTED_COLUMNS:
+                cleaned_row += [''] * (EXPECTED_COLUMNS - len(cleaned_row))
+            # Si trop de colonnes : on coupe
+            elif len(cleaned_row) > EXPECTED_COLUMNS:
+                cleaned_row = cleaned_row[:EXPECTED_COLUMNS]
+            
             data_rows.append(cleaned_row)
             all_errors.extend(validate_row(i + 1, cleaned_row))
 
         st.header("2. Visualisation des Données")
         if data_rows:
             df = pd.DataFrame(data_rows, columns=column_headers)
-            
-            # Nouvelle numérotation (Index commence à 1)
             df.index = df.index + 1
             
             error_row_indices = {error['Ligne'] for error in all_errors}
@@ -279,7 +300,7 @@ def main():
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
-            column_config = {"Ligne": st.column_config.NumberColumn(width="small"), "Rang": st.column_config.NumberColumn(width="small"), "Champ": st.column_config.TextColumn(width="medium"), "Message": st.column_config.TextColumn(width="large")}
+            column_config = {"Ligne": st.column_config.NumberColumn(width="small"), "Rang": st.column_config.TextColumn(width="small"), "Champ": st.column_config.TextColumn(width="medium"), "Message": st.column_config.TextColumn(width="large")}
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
             st.dataframe(errors_df, column_config=column_config, use_container_width=True)
 
