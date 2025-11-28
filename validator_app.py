@@ -9,7 +9,7 @@ from collections import Counter
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.4.0 (Structure Flexible + Doublons détaillés)"
+__version__ = "14.5.0 (Erreur Structure Globale)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -85,9 +85,7 @@ TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_da
 
 def validate_row(row_num, row_data):
     errors = []
-    # Note : row_data est garanti d'avoir 334 colonnes grâce au padding effectué avant l'appel
     annonce_ref = row_data[REF_ANNONCE_INDEX] if len(row_data) > REF_ANNONCE_INDEX else 'N/A'
-    
     for i, clean_value in enumerate(row_data):
         rule = SCHEMA[i]
         error_template = {'Ligne': row_num, 'Référence Annonce': annonce_ref, 'Rang': rule['rang'], 'Champ': rule['nom'], 'Valeur': f'"{clean_value}"'}
@@ -124,7 +122,6 @@ def style_error_rows(row, error_row_indices):
     return ['background-color: rgba(255, 204, 204, 0.6)'] * len(row) if row.name in error_row_indices else [''] * len(row)
 
 def to_excel(df):
-    """Convertit un DataFrame en un fichier Excel binaire."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Données Validées')
@@ -179,18 +176,51 @@ def main():
         lines = normalized_content.strip().split('\n')
         
         # =================================================================
-        # ÉTAPE 1 : Pré-analyse pour cartographier les doublons
+        # ÉTAPE 1 : Pré-analyse (Doublons + Structure Globale)
         # =================================================================
         ref_locations = {}
+        line_lengths = []
+        
         for i, line in enumerate(lines):
             if not line: continue
             temp_fields = line.split('!#')
+            
+            # Ajustement lecture fin de ligne
+            if len(temp_fields) == 335 and temp_fields[334] == '':
+                temp_fields.pop()
+            
+            # Stockage longueur pour analyse globale
+            line_lengths.append(len(temp_fields))
+            
+            # Stockage Ref pour doublons
             if len(temp_fields) > REF_ANNONCE_INDEX:
                 r = temp_fields[REF_ANNONCE_INDEX].strip('"').strip()
                 if r:
                     if r not in ref_locations:
                         ref_locations[r] = []
                     ref_locations[r].append(i + 1)
+        
+        # --- Analyse de la structure globale ---
+        unique_lengths = set(line_lengths)
+        is_global_structure_error = False
+        global_structure_msg = ""
+        
+        # S'il n'y a qu'une seule taille de ligne dans tout le fichier, et qu'elle est fausse
+        if len(unique_lengths) == 1:
+            common_len = list(unique_lengths)[0]
+            if common_len != EXPECTED_COLUMNS:
+                is_global_structure_error = True
+                global_structure_msg = f"Structure fichier incorrecte : TOUTES les lignes contiennent {common_len} champs au lieu de {EXPECTED_COLUMNS}. Les colonnes ont été ajustées automatiquement pour la validation."
+                
+                # On ajoute UNE SEULE erreur générique
+                all_errors.append({
+                    'Ligne': 0, # Ligne 0 pour symboliser "Global"
+                    'Référence Annonce': 'FICHIER ENTIER',
+                    'Rang': '-',
+                    'Champ': 'Structure Générale',
+                    'Message': global_structure_msg,
+                    'Valeur': f'{common_len} colonnes'
+                })
         # =================================================================
 
         # ÉTAPE 2 : Traitement ligne par ligne
@@ -199,37 +229,35 @@ def main():
             
             fields = line.split('!#')
             
-            # Nettoyage de la fin de ligne "classique" Poliris (!# à la fin)
             if len(fields) == 335 and fields[334] == '':
                 fields.pop()
             
-            # =================================================================
-            # MODIFIÉ : Vérification structurelle FLEXIBLE
-            # =================================================================
             current_len = len(fields)
-            if current_len != EXPECTED_COLUMNS:
-                msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
-                
-                if current_len < EXPECTED_COLUMNS:
-                    msg += " Les colonnes manquantes ont été ajoutées (vides) pour permettre le traitement."
-                else:
-                    msg += " Les colonnes excédentaires ont été ignorées."
 
-                all_errors.append({
-                    'Ligne': i + 1,
-                    'Référence Annonce': 'Inconnue/Partielle',
-                    'Rang': 'Général',
-                    'Champ': 'Structure du fichier',
-                    'Message': msg,
-                    'Valeur': f'{current_len} cols'
-                })
-                # On ne fait plus "continue", on continue le traitement !
             # =================================================================
+            # Gestion Structure (Sporadique vs Global)
+            # =================================================================
+            if current_len != EXPECTED_COLUMNS:
+                # On signale l'erreur ICI seulement si ce n'est PAS un problème global
+                if not is_global_structure_error:
+                    msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
+                    if current_len < EXPECTED_COLUMNS:
+                        msg += " Colonnes manquantes ajoutées."
+                    else:
+                        msg += " Colonnes excédentaires ignorées."
 
-            # Règle des guillemets (sur les champs existants uniquement)
+                    all_errors.append({
+                        'Ligne': i + 1,
+                        'Référence Annonce': 'Inconnue/Partielle',
+                        'Rang': 'Général',
+                        'Champ': 'Structure',
+                        'Message': msg,
+                        'Valeur': f'{current_len} cols'
+                    })
+
+            # Règle des guillemets
             raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             for idx, raw_val in enumerate(fields):
-                # On ne vérifie que ce qui existe dans le fichier
                 is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
                 if not is_valid_quote:
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
@@ -259,14 +287,14 @@ def main():
                 })
 
             # =================================================================
-            # NORMALISATION pour la validation de contenu
+            # NORMALISATION (Padding/Cutting)
             # =================================================================
             cleaned_row = [field.strip('"').strip() for field in fields]
             
-            # Si pas assez de colonnes : on complète avec des vides pour éviter le crash
+            # On ajuste la taille QUELLE QUE SOIT la situation (Global ou Sporadique)
+            # pour que la suite du code ne plante pas
             if len(cleaned_row) < EXPECTED_COLUMNS:
                 cleaned_row += [''] * (EXPECTED_COLUMNS - len(cleaned_row))
-            # Si trop de colonnes : on coupe
             elif len(cleaned_row) > EXPECTED_COLUMNS:
                 cleaned_row = cleaned_row[:EXPECTED_COLUMNS]
             
@@ -278,7 +306,11 @@ def main():
             df = pd.DataFrame(data_rows, columns=column_headers)
             df.index = df.index + 1
             
-            error_row_indices = {error['Ligne'] for error in all_errors}
+            # Calcul des lignes à surligner :
+            # Si erreur globale, la ligne 0 est dans all_errors mais n'existe pas dans le DF (index commence à 1)
+            # Donc elle ne sera pas surlignée. C'est le comportement voulu.
+            error_row_indices = {error['Ligne'] for error in all_errors if error['Ligne'] > 0}
+            
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         
             st.header("3. Télécharger les données")
@@ -299,6 +331,10 @@ def main():
         if not all_errors:
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
+            # Message spécial si erreur globale
+            if is_global_structure_error:
+                st.warning(f"⚠️ **ATTENTION :** {global_structure_msg}")
+            
             st.error(f"Le fichier contient {len(all_errors)} erreur(s).")
             column_config = {"Ligne": st.column_config.NumberColumn(width="small"), "Rang": st.column_config.TextColumn(width="small"), "Champ": st.column_config.TextColumn(width="medium"), "Message": st.column_config.TextColumn(width="large")}
             errors_df = pd.DataFrame(all_errors)[['Ligne', 'Référence Annonce', 'Rang', 'Champ', 'Message', 'Valeur']]
