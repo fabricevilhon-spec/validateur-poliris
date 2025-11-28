@@ -185,27 +185,38 @@ def main():
             if len(fields) == 335 and fields[334] == '':
                 fields.pop()
 
-# =================================================================
-            # NOUVEAU : Règle de vérification des guillemets ("")
+          # =================================================================
+            # NOUVEAU : Règle de vérification stricte des guillemets ("")
             # =================================================================
-            # On tente de récupérer la référence brute pour le rapport d'erreur (si elle existe)
+            # On tente de récupérer la référence brute pour le rapport d'erreur
             raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             
             for idx, raw_val in enumerate(fields):
-                # La règle : doit commencer ET finir par un guillemet
-                # Exemples valides : "texte", ""
-                # Exemples invalides : texte, "texte, texte"
-                if not (raw_val.startswith('"') and raw_val.endswith('"')):
-                    # On récupère le nom du champ via le SCHEMA global
+                # La règle stricte :
+                # 1. Doit commencer par "
+                # 2. Doit finir par "
+                # 3. Doit faire au moins 2 caractères (pour accepter "" comme vide valide)
+                
+                # Si le champ est strictement vide (ex: !#!#), raw_val vaut '' -> len est 0 -> Erreur
+                # Si le champ est mal formé (ex: "texte), -> Erreur
+                # Si le champ est un guillemet seul (ex: "), -> len est 1 -> Erreur
+                
+                is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
+                
+                if not is_valid_quote:
+                    # On récupère le nom du champ
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
+                    
+                    # On prépare une valeur lisible pour le rapport d'erreur
+                    valeur_affichee = "[VIDE]" if raw_val == '' else raw_val
                     
                     all_errors.append({
                         'Ligne': i + 1,
                         'Référence Annonce': raw_ref,
                         'Rang': idx + 1,
                         'Champ': field_name,
-                        'Message': 'Format CSV invalide : Le champ n\'est pas encapsulé dans des guillemets ("").',
-                        'Valeur': raw_val
+                        'Message': 'Format CSV invalide : Tout champ doit être entre guillemets (""), même vide.',
+                        'Valeur': valeur_affichee
                     })
             # =================================================================
             
