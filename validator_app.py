@@ -220,6 +220,27 @@ def main():
                     })
             # =================================================================
             
+			# =================================================================
+            # NOUVEAU : Règle d'unicité de la référence (Doublons)
+            # =================================================================
+            # On récupère la référence nettoyée (sans guillemets)
+            clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip()
+            
+            # On ne vérifie que si la référence n'est pas vide (le champ vide est géré par ailleurs)
+            if clean_ref_for_check:
+                if clean_ref_for_check in seen_references:
+                    all_errors.append({
+                        'Ligne': i + 1,
+                        'Référence Annonce': clean_ref_for_check,
+                        'Rang': 2,
+                        'Champ': "Référence agence du bien",
+                        'Message': "Doublon détecté : Cette référence apparaît déjà plus haut dans le fichier.",
+                        'Valeur': clean_ref_for_check
+                    })
+                else:
+                    seen_references.add(clean_ref_for_check)
+            # =================================================================
+			
             cleaned_row = [field.strip('"').strip() for field in fields]
             
             if len(cleaned_row) != EXPECTED_COLUMNS:
