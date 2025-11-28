@@ -3,14 +3,13 @@ import pandas as pd
 import io
 from datetime import datetime
 
-# Augmente la limite de cellules (suffisant pour environ 6000 annonces complètes)
+# =============================================================================
+# CORRECTIF MÉMOIRE ET VERSION
+# =============================================================================
+# Augmente la limite de cellules pour l'affichage couleur
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-# =============================================================================
-# DÉFINITION DE LA VERSION ET CONFIGURATION
-# =============================================================================
-# MODIFIÉ : Mise à jour de la version pour refléter la nouvelle fonctionnalité
-__version__ = "14.0.0 (Ajout du téléchargement Excel)"
+__version__ = "14.1.0 (Doublons + Guimet strict)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -122,7 +121,6 @@ def try_decode(data_bytes):
 def style_error_rows(row, error_row_indices):
     return ['background-color: rgba(255, 204, 204, 0.6)'] * len(row) if row.name in error_row_indices else [''] * len(row)
 
-# NOUVEAU : Fonction pour convertir le DataFrame en fichier Excel en mémoire
 def to_excel(df):
     """Convertit un DataFrame en un fichier Excel binaire."""
     output = io.BytesIO()
@@ -174,11 +172,13 @@ def main():
         st.info(f"Fichier lu avec l'encodage : **{detected_encoding}**")
         
         all_errors, data_rows = [], []
-
-		seen_references = set()
         
+        # Initialisation de l'ensemble pour traquer les doublons (AVANT la boucle)
+        seen_references = set()
+
         normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
         lines = normalized_content.strip().split('\n')
+        
         for i, line in enumerate(lines):
             if not line: continue
             
@@ -186,32 +186,20 @@ def main():
             
             if len(fields) == 335 and fields[334] == '':
                 fields.pop()
-
-          # =================================================================
-            # NOUVEAU : Règle de vérification stricte des guillemets ("")
-            # =================================================================
-            # On tente de récupérer la référence brute pour le rapport d'erreur
-            raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             
+            # Vérification structurelle
+            if len(fields) != EXPECTED_COLUMNS:
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(fields)}).", 'Valeur': 'Ligne non affichée.'})
+                continue
+
+            # Règle des guillemets
+            raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             for idx, raw_val in enumerate(fields):
-                # La règle stricte :
-                # 1. Doit commencer par "
-                # 2. Doit finir par "
-                # 3. Doit faire au moins 2 caractères (pour accepter "" comme vide valide)
-                
-                # Si le champ est strictement vide (ex: !#!#), raw_val vaut '' -> len est 0 -> Erreur
-                # Si le champ est mal formé (ex: "texte), -> Erreur
-                # Si le champ est un guillemet seul (ex: "), -> len est 1 -> Erreur
-                
+                # Règle : doit commencer et finir par " et avoir une longueur min de 2 ("")
                 is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
-                
                 if not is_valid_quote:
-                    # On récupère le nom du champ
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
-                    
-                    # On prépare une valeur lisible pour le rapport d'erreur
                     valeur_affichee = "[VIDE]" if raw_val == '' else raw_val
-                    
                     all_errors.append({
                         'Ligne': i + 1,
                         'Référence Annonce': raw_ref,
@@ -220,15 +208,9 @@ def main():
                         'Message': 'Format CSV invalide : Tout champ doit être entre guillemets (""), même vide.',
                         'Valeur': valeur_affichee
                     })
-            # =================================================================
-            
-			# =================================================================
-            # NOUVEAU : Règle d'unicité de la référence (Doublons)
-            # =================================================================
-            # On récupère la référence nettoyée (sans guillemets)
+
+            # Règle d'unicité de la référence (Doublons)
             clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip()
-            
-            # On ne vérifie que si la référence n'est pas vide (le champ vide est géré par ailleurs)
             if clean_ref_for_check:
                 if clean_ref_for_check in seen_references:
                     all_errors.append({
@@ -241,14 +223,9 @@ def main():
                     })
                 else:
                     seen_references.add(clean_ref_for_check)
-            # =================================================================
-			
+
             cleaned_row = [field.strip('"').strip() for field in fields]
             
-            if len(cleaned_row) != EXPECTED_COLUMNS:
-                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'N/A', 'Rang': 'N/A', 'Champ': 'Général', 'Message': f"Erreur de structure (attendu: {EXPECTED_COLUMNS} champs, trouvé: {len(cleaned_row)}).", 'Valeur': 'Ligne non affichée.'})
-                continue
-                
             data_rows.append(cleaned_row)
             all_errors.extend(validate_row(i + 1, cleaned_row))
 
@@ -258,7 +235,6 @@ def main():
             error_row_indices = {error['Ligne'] - 1 for error in all_errors}
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         
-            # NOUVEAU : Section pour le téléchargement
             st.header("3. Télécharger les données")
             excel_data = to_excel(df)
             st.download_button(
@@ -273,7 +249,6 @@ def main():
         else:
              st.info("Le fichier est vide ou ne contient aucune donnée à afficher.")
 
-        # MODIFIÉ : Changement de numéro pour la section des erreurs
         st.header("4. Rapport d'Erreurs")
         if not all_errors:
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
@@ -291,4 +266,3 @@ if __name__ == "__main__":
     except Exception as e:
         st.error("Une erreur fatale et non prévue a provoqué le crash de l'application.")
         st.exception(e)
-
