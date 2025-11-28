@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
+from collections import Counter
 
 # =============================================================================
 # CORRECTIF MÉMOIRE ET VERSION
 # =============================================================================
-# Augmente la limite de cellules pour l'affichage couleur
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.1.0 (Doublons + Guimet strict)"
+__version__ = "14.2.0 (Doublons Multiples + Index Fixe)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -173,12 +173,29 @@ def main():
         
         all_errors, data_rows = [], []
         
-        # Initialisation de l'ensemble pour traquer les doublons (AVANT la boucle)
-        seen_references = set()
-
         normalized_content = file_content.replace('\r\n', '\n').replace('\r', '\n')
         lines = normalized_content.strip().split('\n')
         
+        # =================================================================
+        # ÉTAPE 1 : Pré-analyse pour identifier TOUS les doublons
+        # =================================================================
+        all_refs_found = []
+        for line in lines:
+            if not line: continue
+            temp_fields = line.split('!#')
+            if len(temp_fields) > REF_ANNONCE_INDEX:
+                # On récupère la ref propre
+                r = temp_fields[REF_ANNONCE_INDEX].strip('"').strip()
+                if r:
+                    all_refs_found.append(r)
+        
+        # On compte les occurrences de chaque référence
+        ref_counts = Counter(all_refs_found)
+        # On crée un set des refs qui apparaissent plus d'une fois
+        duplicate_refs_set = {ref for ref, count in ref_counts.items() if count > 1}
+        # =================================================================
+
+        # ÉTAPE 2 : Traitement ligne par ligne
         for i, line in enumerate(lines):
             if not line: continue
             
@@ -195,7 +212,6 @@ def main():
             # Règle des guillemets
             raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             for idx, raw_val in enumerate(fields):
-                # Règle : doit commencer et finir par " et avoir une longueur min de 2 ("")
                 is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
                 if not is_valid_quote:
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
@@ -209,30 +225,37 @@ def main():
                         'Valeur': valeur_affichee
                     })
 
-            # Règle d'unicité de la référence (Doublons)
+            # =================================================================
+            # Nouvelle Règle Doublons : Vérifie si la ref est dans la liste "noire"
+            # =================================================================
             clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip()
-            if clean_ref_for_check:
-                if clean_ref_for_check in seen_references:
-                    all_errors.append({
-                        'Ligne': i + 1,
-                        'Référence Annonce': clean_ref_for_check,
-                        'Rang': 2,
-                        'Champ': "Référence agence du bien",
-                        'Message': "Doublon détecté : Cette référence apparaît déjà plus haut dans le fichier.",
-                        'Valeur': clean_ref_for_check
-                    })
-                else:
-                    seen_references.add(clean_ref_for_check)
+            if clean_ref_for_check and clean_ref_for_check in duplicate_refs_set:
+                count = ref_counts[clean_ref_for_check]
+                all_errors.append({
+                    'Ligne': i + 1,
+                    'Référence Annonce': clean_ref_for_check,
+                    'Rang': 2,
+                    'Champ': "Référence agence du bien",
+                    # Le message indique maintenant combien de fois elle apparait au total
+                    'Message': f"Référence multiple détectée : Présente {count} fois dans le fichier.",
+                    'Valeur': clean_ref_for_check
+                })
+            # =================================================================
 
             cleaned_row = [field.strip('"').strip() for field in fields]
-            
             data_rows.append(cleaned_row)
             all_errors.extend(validate_row(i + 1, cleaned_row))
 
         st.header("2. Visualisation des Données")
         if data_rows:
             df = pd.DataFrame(data_rows, columns=column_headers)
-            error_row_indices = {error['Ligne'] - 1 for error in all_errors}
+            
+            # =================================================================
+            # Nouvelle numérotation : On fait commencer l'index à 1
+            # =================================================================
+            df.index = df.index + 1
+            
+            error_row_indices = {error['Ligne'] for error in all_errors} # Plus besoin de -1 car df.index match
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
         
             st.header("3. Télécharger les données")
