@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 from datetime import datetime
 from collections import Counter
 
@@ -9,7 +10,7 @@ from collections import Counter
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.5.0 (Erreur Structure Globale)"
+__version__ = "14.6.0 (Détection Décalage)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -52,6 +53,43 @@ def check_obligatoire(value, rule):
     if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
     return None
 
+def check_suspicion_decalage(value, rule):
+    """
+    Vérifie si la donnée est radicalement incohérente avec le type attendu,
+    ce qui suggère un décalage de colonne (ex: Texte dans un champ Prix).
+    """
+    if not value:
+        return None
+
+    rtype = rule.get('type')
+
+    # CAS 1 : Champ Numérique (Entier ou Décimal) qui contient des lettres
+    # Ex: Le champ "Prix" contient "Paris" ou "Cuisine"
+    if rtype in ['Entier', 'Décimal']:
+        # On cherche s'il y a au moins une lettre (a-z)
+        if re.search(r'[a-zA-Z]', value):
+            return "🚨 DÉCALAGE PROBABLE : Texte détecté dans un champ numérique."
+
+    # CAS 2 : Champ Date qui ne ressemble pas du tout à une date
+    # Ex: Le champ "Date dispo" contient "Cuisine équipée" (texte long sans chiffre)
+    if rtype == 'Date':
+        # Si ne contient aucun chiffre OU est trop long (> 12 chars pour une date jj/mm/aaaa + marge)
+        if not re.search(r'\d', value) or len(value) > 12:
+             return "🚨 DÉCALAGE PROBABLE : Valeur incohérente pour une date (Texte ?)."
+
+    # CAS 3 : Liste de valeurs (Enum) totalement hors sujet
+    # Ex: Type d'annonce attend "Vente" mais reçoit un Code Postal "75001"
+    if rule.get('valeurs'):
+        valeurs_clean = [str(v).lower() for v in rule['valeurs']]
+        # Si la valeur est numérique alors qu'on attend du texte (ex: "75000" au lieu de "Vente")
+        # On vérifie d'abord que les valeurs attendues ne sont pas elles-mêmes des chiffres
+        expected_are_numbers = any(v.isdigit() for v in valeurs_clean)
+        
+        if value.isdigit() and not expected_are_numbers:
+            return "🚨 DÉCALAGE PROBABLE : Nombre trouvé dans un champ de type Liste (Texte attendu)."
+
+    return None
+
 def check_type_entier(value, rule):
     if rule.get('type') == 'Entier' and value and not value.isdigit(): return 'Doit être un entier.'
     return None
@@ -81,7 +119,8 @@ def check_valeurs_permises(value, rule):
             return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
+# Pipeline mis à jour : check_suspicion_decalage est prioritaire
+TYPE_VALIDATION_PIPELINE = [check_suspicion_decalage, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
 
 def validate_row(row_num, row_data):
     errors = []
