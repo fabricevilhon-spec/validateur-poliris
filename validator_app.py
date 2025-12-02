@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import re
 from datetime import datetime
 from collections import Counter
 
@@ -10,7 +9,7 @@ from collections import Counter
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.6.0 (Détection Décalage)"
+__version__ = "14.6.0 (ID Agence Alphanumérique)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -21,7 +20,8 @@ REF_ANNONCE_INDEX = 1
 MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 
 KNOWN_FIELDS = {
-    1: {'nom': 'Identifiant agence', 'type': 'Entier'},
+    # MODIFIÉ : Le type est maintenant 'Texte_Sans_Espace' au lieu de 'Entier'
+    1: {'nom': 'Identifiant agence', 'type': 'Texte_Sans_Espace'},
     2: {'nom': 'Référence agence du bien', 'type': 'Texte'},
     3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente-de-prestige", "vente-fonds-de-commerce", "viager"]},
     4: {'nom': 'Type de bien', 'type': 'Texte'},
@@ -53,45 +53,15 @@ def check_obligatoire(value, rule):
     if rule.get('obligatoire') and not value: return 'Le champ obligatoire est vide.'
     return None
 
-def check_suspicion_decalage(value, rule):
-    """
-    Vérifie si la donnée est radicalement incohérente avec le type attendu,
-    ce qui suggère un décalage de colonne (ex: Texte dans un champ Prix).
-    """
-    if not value:
-        return None
-
-    rtype = rule.get('type')
-
-    # CAS 1 : Champ Numérique (Entier ou Décimal) qui contient des lettres
-    # Ex: Le champ "Prix" contient "Paris" ou "Cuisine"
-    if rtype in ['Entier', 'Décimal']:
-        # On cherche s'il y a au moins une lettre (a-z)
-        if re.search(r'[a-zA-Z]', value):
-            return "🚨 DÉCALAGE PROBABLE : Texte détecté dans un champ numérique."
-
-    # CAS 2 : Champ Date qui ne ressemble pas du tout à une date
-    # Ex: Le champ "Date dispo" contient "Cuisine équipée" (texte long sans chiffre)
-    if rtype == 'Date':
-        # Si ne contient aucun chiffre OU est trop long (> 12 chars pour une date jj/mm/aaaa + marge)
-        if not re.search(r'\d', value) or len(value) > 12:
-             return "🚨 DÉCALAGE PROBABLE : Valeur incohérente pour une date (Texte ?)."
-
-    # CAS 3 : Liste de valeurs (Enum) totalement hors sujet
-    # Ex: Type d'annonce attend "Vente" mais reçoit un Code Postal "75001"
-    if rule.get('valeurs'):
-        valeurs_clean = [str(v).lower() for v in rule['valeurs']]
-        # Si la valeur est numérique alors qu'on attend du texte (ex: "75000" au lieu de "Vente")
-        # On vérifie d'abord que les valeurs attendues ne sont pas elles-mêmes des chiffres
-        expected_are_numbers = any(v.isdigit() for v in valeurs_clean)
-        
-        if value.isdigit() and not expected_are_numbers:
-            return "🚨 DÉCALAGE PROBABLE : Nombre trouvé dans un champ de type Liste (Texte attendu)."
-
-    return None
-
 def check_type_entier(value, rule):
     if rule.get('type') == 'Entier' and value and not value.isdigit(): return 'Doit être un entier.'
+    return None
+
+# NOUVEAU : Fonction pour vérifier l'absence d'espaces (pour l'ID Agence)
+def check_type_sans_espace(value, rule):
+    if rule.get('type') == 'Texte_Sans_Espace' and value:
+        if ' ' in value:
+            return "Format invalide : Ce champ ne doit pas contenir d'espaces."
     return None
 
 def check_type_decimal(value, rule):
@@ -119,8 +89,8 @@ def check_valeurs_permises(value, rule):
             return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-# Pipeline mis à jour : check_suspicion_decalage est prioritaire
-TYPE_VALIDATION_PIPELINE = [check_suspicion_decalage, check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises]
+# Ajout de la nouvelle fonction au pipeline
+TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises, check_type_sans_espace]
 
 def validate_row(row_num, row_data):
     errors = []
@@ -244,16 +214,14 @@ def main():
         is_global_structure_error = False
         global_structure_msg = ""
         
-        # S'il n'y a qu'une seule taille de ligne dans tout le fichier, et qu'elle est fausse
         if len(unique_lengths) == 1:
             common_len = list(unique_lengths)[0]
             if common_len != EXPECTED_COLUMNS:
                 is_global_structure_error = True
                 global_structure_msg = f"Structure fichier incorrecte : TOUTES les lignes contiennent {common_len} champs au lieu de {EXPECTED_COLUMNS}. Les colonnes ont été ajustées automatiquement pour la validation."
                 
-                # On ajoute UNE SEULE erreur générique
                 all_errors.append({
-                    'Ligne': 0, # Ligne 0 pour symboliser "Global"
+                    'Ligne': 0, 
                     'Référence Annonce': 'FICHIER ENTIER',
                     'Rang': '-',
                     'Champ': 'Structure Générale',
@@ -273,11 +241,8 @@ def main():
             
             current_len = len(fields)
 
-            # =================================================================
-            # Gestion Structure (Sporadique vs Global)
-            # =================================================================
+            # Gestion Structure
             if current_len != EXPECTED_COLUMNS:
-                # On signale l'erreur ICI seulement si ce n'est PAS un problème global
                 if not is_global_structure_error:
                     msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
                     if current_len < EXPECTED_COLUMNS:
@@ -325,13 +290,9 @@ def main():
                     'Valeur': clean_ref_for_check
                 })
 
-            # =================================================================
-            # NORMALISATION (Padding/Cutting)
-            # =================================================================
+            # Normalisation (Padding/Cutting)
             cleaned_row = [field.strip('"').strip() for field in fields]
             
-            # On ajuste la taille QUELLE QUE SOIT la situation (Global ou Sporadique)
-            # pour que la suite du code ne plante pas
             if len(cleaned_row) < EXPECTED_COLUMNS:
                 cleaned_row += [''] * (EXPECTED_COLUMNS - len(cleaned_row))
             elif len(cleaned_row) > EXPECTED_COLUMNS:
@@ -345,9 +306,6 @@ def main():
             df = pd.DataFrame(data_rows, columns=column_headers)
             df.index = df.index + 1
             
-            # Calcul des lignes à surligner :
-            # Si erreur globale, la ligne 0 est dans all_errors mais n'existe pas dans le DF (index commence à 1)
-            # Donc elle ne sera pas surlignée. C'est le comportement voulu.
             error_row_indices = {error['Ligne'] for error in all_errors if error['Ligne'] > 0}
             
             st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
@@ -370,7 +328,6 @@ def main():
         if not all_errors:
             st.success("🎉 Félicitations ! Aucune erreur détectée.")
         else:
-            # Message spécial si erreur globale
             if is_global_structure_error:
                 st.warning(f"⚠️ **ATTENTION :** {global_structure_msg}")
             
