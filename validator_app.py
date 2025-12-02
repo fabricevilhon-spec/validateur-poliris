@@ -9,7 +9,7 @@ from collections import Counter
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.6.0 (ID Agence Alphanumérique)"
+__version__ = "14.7.0 (Optimisation Affichage & Mémoire)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -20,7 +20,6 @@ REF_ANNONCE_INDEX = 1
 MANDATORY_RANKS = {1, 2, 3, 4, 5, 6, 11, 18, 20, 21, 175}
 
 KNOWN_FIELDS = {
-    # MODIFIÉ : Le type est maintenant 'Texte_Sans_Espace' au lieu de 'Entier'
     1: {'nom': 'Identifiant agence', 'type': 'Texte_Sans_Espace'},
     2: {'nom': 'Référence agence du bien', 'type': 'Texte'},
     3: {'nom': 'Type d\'annonce', 'type': 'Texte', 'valeurs': ["cession de bail", "location", "location vacances", "produit d'investissement", "vente", "vente-de-prestige", "vente-fonds-de-commerce", "viager"]},
@@ -57,7 +56,6 @@ def check_type_entier(value, rule):
     if rule.get('type') == 'Entier' and value and not value.isdigit(): return 'Doit être un entier.'
     return None
 
-# NOUVEAU : Fonction pour vérifier l'absence d'espaces (pour l'ID Agence)
 def check_type_sans_espace(value, rule):
     if rule.get('type') == 'Texte_Sans_Espace' and value:
         if ' ' in value:
@@ -89,7 +87,6 @@ def check_valeurs_permises(value, rule):
             return f'Valeur non autorisée. Attendues: {rule["valeurs"]}'
     return None
 
-# Ajout de la nouvelle fonction au pipeline
 TYPE_VALIDATION_PIPELINE = [check_type_entier, check_type_decimal, check_type_date, check_valeurs_permises, check_type_sans_espace]
 
 def validate_row(row_num, row_data):
@@ -193,15 +190,11 @@ def main():
         for i, line in enumerate(lines):
             if not line: continue
             temp_fields = line.split('!#')
-            
-            # Ajustement lecture fin de ligne
             if len(temp_fields) == 335 and temp_fields[334] == '':
                 temp_fields.pop()
             
-            # Stockage longueur pour analyse globale
             line_lengths.append(len(temp_fields))
             
-            # Stockage Ref pour doublons
             if len(temp_fields) > REF_ANNONCE_INDEX:
                 r = temp_fields[REF_ANNONCE_INDEX].strip('"').strip()
                 if r:
@@ -209,7 +202,6 @@ def main():
                         ref_locations[r] = []
                     ref_locations[r].append(i + 1)
         
-        # --- Analyse de la structure globale ---
         unique_lengths = set(line_lengths)
         is_global_structure_error = False
         global_structure_msg = ""
@@ -219,98 +211,57 @@ def main():
             if common_len != EXPECTED_COLUMNS:
                 is_global_structure_error = True
                 global_structure_msg = f"Structure fichier incorrecte : TOUTES les lignes contiennent {common_len} champs au lieu de {EXPECTED_COLUMNS}. Les colonnes ont été ajustées automatiquement pour la validation."
-                
                 all_errors.append({
-                    'Ligne': 0, 
-                    'Référence Annonce': 'FICHIER ENTIER',
-                    'Rang': '-',
-                    'Champ': 'Structure Générale',
-                    'Message': global_structure_msg,
-                    'Valeur': f'{common_len} colonnes'
+                    'Ligne': 0, 'Référence Annonce': 'FICHIER ENTIER', 'Rang': '-', 'Champ': 'Structure Générale',
+                    'Message': global_structure_msg, 'Valeur': f'{common_len} colonnes'
                 })
-        # =================================================================
 
+        # =================================================================
         # ÉTAPE 2 : Traitement ligne par ligne
+        # =================================================================
         for i, line in enumerate(lines):
             if not line: continue
             
             fields = line.split('!#')
-            
-            if len(fields) == 335 and fields[334] == '':
-                fields.pop()
+            if len(fields) == 335 and fields[334] == '': fields.pop()
             
             current_len = len(fields)
+            if current_len != EXPECTED_COLUMNS and not is_global_structure_error:
+                msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
+                msg += " Colonnes manquantes ajoutées." if current_len < EXPECTED_COLUMNS else " Colonnes excédentaires ignorées."
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': 'Inconnue', 'Rang': 'Général', 'Champ': 'Structure', 'Message': msg, 'Valeur': f'{current_len} cols'})
 
-            # Gestion Structure
-            if current_len != EXPECTED_COLUMNS:
-                if not is_global_structure_error:
-                    msg = f"Avertissement structure : {current_len} champs trouvés (attendu {EXPECTED_COLUMNS})."
-                    if current_len < EXPECTED_COLUMNS:
-                        msg += " Colonnes manquantes ajoutées."
-                    else:
-                        msg += " Colonnes excédentaires ignorées."
-
-                    all_errors.append({
-                        'Ligne': i + 1,
-                        'Référence Annonce': 'Inconnue/Partielle',
-                        'Rang': 'Général',
-                        'Champ': 'Structure',
-                        'Message': msg,
-                        'Valeur': f'{current_len} cols'
-                    })
-
-            # Règle des guillemets
             raw_ref = fields[REF_ANNONCE_INDEX].strip('"') if len(fields) > REF_ANNONCE_INDEX else 'N/A'
             for idx, raw_val in enumerate(fields):
                 is_valid_quote = len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"')
                 if not is_valid_quote:
                     field_name = SCHEMA[idx]['nom'] if idx < len(SCHEMA) else f'Champ {idx+1}'
                     valeur_affichee = "[VIDE]" if raw_val == '' else raw_val
-                    all_errors.append({
-                        'Ligne': i + 1,
-                        'Référence Annonce': raw_ref,
-                        'Rang': idx + 1,
-                        'Champ': field_name,
-                        'Message': 'Format CSV invalide : Tout champ doit être entre guillemets (""), même vide.',
-                        'Valeur': valeur_affichee
-                    })
+                    all_errors.append({'Ligne': i + 1, 'Référence Annonce': raw_ref, 'Rang': idx + 1, 'Champ': field_name, 'Message': 'Format CSV invalide : Tout champ doit être entre guillemets (""), même vide.', 'Valeur': valeur_affichee})
 
-            # Règle Doublons
             clean_ref_for_check = fields[REF_ANNONCE_INDEX].strip('"').strip() if len(fields) > REF_ANNONCE_INDEX else ""
             if clean_ref_for_check and len(ref_locations.get(clean_ref_for_check, [])) > 1:
                 locations = ref_locations[clean_ref_for_check]
                 count = len(locations)
                 locs_str = ", ".join(map(str, locations))
-                all_errors.append({
-                    'Ligne': i + 1,
-                    'Référence Annonce': clean_ref_for_check,
-                    'Rang': 2,
-                    'Champ': "Référence agence du bien",
-                    'Message': f"Référence multiple détectée : Présente {count} fois (lignes : {locs_str}).",
-                    'Valeur': clean_ref_for_check
-                })
+                all_errors.append({'Ligne': i + 1, 'Référence Annonce': clean_ref_for_check, 'Rang': 2, 'Champ': "Référence agence du bien", 'Message': f"Référence multiple détectée : Présente {count} fois (lignes : {locs_str}).", 'Valeur': clean_ref_for_check})
 
-            # Normalisation (Padding/Cutting)
             cleaned_row = [field.strip('"').strip() for field in fields]
-            
-            if len(cleaned_row) < EXPECTED_COLUMNS:
-                cleaned_row += [''] * (EXPECTED_COLUMNS - len(cleaned_row))
-            elif len(cleaned_row) > EXPECTED_COLUMNS:
-                cleaned_row = cleaned_row[:EXPECTED_COLUMNS]
+            if len(cleaned_row) < EXPECTED_COLUMNS: cleaned_row += [''] * (EXPECTED_COLUMNS - len(cleaned_row))
+            elif len(cleaned_row) > EXPECTED_COLUMNS: cleaned_row = cleaned_row[:EXPECTED_COLUMNS]
             
             data_rows.append(cleaned_row)
             all_errors.extend(validate_row(i + 1, cleaned_row))
 
-        st.header("2. Visualisation des Données")
+        # =================================================================
+        # AFFICHAGE ET TÉLÉCHARGEMENT (OPTIMISÉ)
+        # =================================================================
         if data_rows:
             df = pd.DataFrame(data_rows, columns=column_headers)
             df.index = df.index + 1
             
-            error_row_indices = {error['Ligne'] for error in all_errors if error['Ligne'] > 0}
-            
-            st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
-        
-            st.header("3. Télécharger les données")
+            # --- 1. BOUTON TÉLÉCHARGEMENT EN PRIORITÉ ---
+            st.header("2. Télécharger les données")
             excel_data = to_excel(df)
             st.download_button(
                 label="📥 Télécharger en format Excel",
@@ -318,6 +269,19 @@ def main():
                 file_name=f'donnees_validees_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
+
+            # --- 2. VISUALISATION SÉCURISÉE ---
+            st.header("3. Visualisation des Données")
+            
+            # Case à cocher pour activer le style lourd (Désactivé par défaut pour éviter le crash)
+            st.info("💡 Pour éviter de ralentir votre navigateur, le surlignage des erreurs est désactivé par défaut.")
+            activer_couleurs = st.checkbox("Activer le surlignage des erreurs en rouge (Peut ralentir l'affichage)")
+
+            if activer_couleurs:
+                error_row_indices = {error['Ligne'] for error in all_errors if error['Ligne'] > 0}
+                st.dataframe(df.style.apply(style_error_rows, error_row_indices=error_row_indices, axis=1), use_container_width=True, height=600)
+            else:
+                st.dataframe(df, use_container_width=True, height=600)
         
         elif all_errors:
              st.warning("Aucune donnée à afficher car toutes les lignes présentent une erreur de structure majeure.")
