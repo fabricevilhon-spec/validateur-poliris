@@ -9,7 +9,7 @@ from collections import Counter
 # =============================================================================
 pd.set_option("styler.render.max_elements", 2_000_000)
 
-__version__ = "14.7.0 (Optimisation Affichage & Mémoire)"
+__version__ = "14.8.0 (Colonnes Excel ajustées automatiquement)"
 EXPECTED_COLUMNS = 334
 HEADER_FILE = 'En-tête_Poliris.csv'
 REF_ANNONCE_INDEX = 1
@@ -127,10 +127,22 @@ def try_decode(data_bytes):
 def style_error_rows(row, error_row_indices):
     return ['background-color: rgba(255, 204, 204, 0.6)'] * len(row) if row.name in error_row_indices else [''] * len(row)
 
+# MODIFIÉ : Fonction améliorée pour ajuster la largeur des colonnes
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Données Validées')
+        
+        # Récupération de l'objet "feuille de calcul" pour le manipuler
+        worksheet = writer.sheets['Données Validées']
+        
+        # Ajustement automatique de la largeur des colonnes
+        for i, col in enumerate(df.columns):
+            # On calcule la largeur : longueur du titre + une petite marge (ex: +2 caractères)
+            # On plafonne à 50 pour ne pas avoir des colonnes géantes
+            column_len = min(len(str(col)) + 2, 50)
+            worksheet.set_column(i, i, column_len)
+            
     processed_data = output.getvalue()
     return processed_data
 
@@ -254,13 +266,12 @@ def main():
             all_errors.extend(validate_row(i + 1, cleaned_row))
 
         # =================================================================
-        # AFFICHAGE ET TÉLÉCHARGEMENT (OPTIMISÉ)
+        # AFFICHAGE ET TÉLÉCHARGEMENT
         # =================================================================
         if data_rows:
             df = pd.DataFrame(data_rows, columns=column_headers)
             df.index = df.index + 1
             
-            # --- 1. BOUTON TÉLÉCHARGEMENT EN PRIORITÉ ---
             st.header("2. Télécharger les données")
             excel_data = to_excel(df)
             st.download_button(
@@ -270,10 +281,7 @@ def main():
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
-            # --- 2. VISUALISATION SÉCURISÉE ---
             st.header("3. Visualisation des Données")
-            
-            # Case à cocher pour activer le style lourd (Désactivé par défaut pour éviter le crash)
             st.info("💡 Pour éviter de ralentir votre navigateur, le surlignage des erreurs est désactivé par défaut.")
             activer_couleurs = st.checkbox("Activer le surlignage des erreurs en rouge (Peut ralentir l'affichage)")
 
